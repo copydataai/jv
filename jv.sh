@@ -40,7 +40,6 @@ success() {
 
 info() {
     echo -e "${BLUE}→${NC} $1"
-    echo -e "${BLUE} done ${NC}"
 }
 
 warn() {
@@ -65,7 +64,7 @@ show_help() {
     echo -e "  jv <command> [arguments]"
     echo -e ""
     echo -e "${BLUE}Commands:${NC}"
-    echo -e "  ${GREEN}create${NC} <project-name>         Create a new Java project (mkdir + init)"
+    echo -e "  ${GREEN}create${NC} <project-name> [package]  Create a new Java project (mkdir + init)"
     echo -e "  ${GREEN}init${NC}                          Initialize project in current directory"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} <ClassName> [args...]     Run compiled Java program"
@@ -75,6 +74,7 @@ show_help() {
     echo -e ""
     echo -e "${BLUE}Examples:${NC}"
     echo -e "  jv create my-assignment              # Create new project"
+    echo -e "  jv create my-app ie.atu.sw           # Create with package"
     echo -e "  jv init                               # Initialize in current dir"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
@@ -99,6 +99,7 @@ show_version() {
 # Initialize project structure
 init_project() {
     local project_name="${1:-my-project}"
+    local package_name="${2:-}"
     
     if [[ -f "$JV_CONFIG" ]]; then
         warn "Project already initialized (jv.json exists)"
@@ -110,12 +111,18 @@ init_project() {
     # Create directories
     mkdir -p "$SRC_DIR" "$BIN_DIR" "$LIB_DIR"
     
+    # Determine main class name
+    local main_class="Main"
+    if [[ -n "$package_name" ]]; then
+        main_class="${package_name}.Main"
+    fi
+    
     # Create jv.json config
     cat > "$JV_CONFIG" << EOF
 {
   "name": "$project_name",
   "version": "1.0.0",
-  "mainClass": "",
+  "mainClass": "$main_class",
   "sourceDir": "src",
   "outputDir": "bin",
   "libDir": "lib"
@@ -124,7 +131,33 @@ EOF
     
     # Create sample Main.java if src is empty
     if [[ ! "$(ls -A $SRC_DIR 2>/dev/null)" ]]; then
-        cat > "$SRC_DIR/Main.java" << 'EOF'
+        if [[ -n "$package_name" ]]; then
+            # Create package directory structure
+            local package_path="${package_name//.//}"
+            mkdir -p "$SRC_DIR/$package_path"
+            
+            # Create Main.java with package declaration
+            cat > "$SRC_DIR/$package_path/Main.java" << EOF
+package $package_name;
+
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello from JV!");
+        System.out.println("Package: $package_name");
+        
+        if (args.length > 0) {
+            System.out.println("Arguments:");
+            for (String arg : args) {
+                System.out.println("  - " + arg);
+            }
+        }
+    }
+}
+EOF
+            success "Created $package_name.Main in $SRC_DIR/$package_path/"
+        else
+            # Create simple Main.java without package
+            cat > "$SRC_DIR/Main.java" << 'EOF'
 public class Main {
     public static void main(String[] args) {
         System.out.println("Hello from JV!");
@@ -138,7 +171,8 @@ public class Main {
     }
 }
 EOF
-        success "Created sample Main.java"
+            success "Created sample Main.java"
+        fi
     fi
     
     success "Project initialized successfully"
@@ -152,27 +186,48 @@ EOF
 # Create new project (mkdir + init)
 create_project() {
     local project_name="$1"
+    local package_name="$2"
     
     if [[ -z "$project_name" ]]; then
-        error "Project name required. Usage: jv create <project-name>"
+        error "Project name required. Usage: jv create <project-name> [package-name]"
     fi
     
     if [[ -d "$project_name" ]]; then
         error "Directory '$project_name' already exists"
     fi
     
+    # If package name not provided as argument, ask interactively
+    if [[ -z "$package_name" ]]; then
+        echo -e ""
+        echo -e "${BLUE}Do you want to create a package structure?${NC}"
+        echo -e "  Examples: ie.atu.sw, com.example, org.myapp"
+        echo -e "  Press Enter to skip (no package)"
+        read -p "Package name: " package_name
+        
+        # Trim whitespace
+        package_name="$(echo -e "${package_name}" | xargs)"
+    fi
+    
     info "Creating project: $project_name"
+    if [[ -n "$package_name" ]]; then
+        info "With package: $package_name"
+    fi
+    
     mkdir -p "$project_name"
     cd "$project_name"
     
-    init_project "$project_name"
+    init_project "$project_name" "$package_name"
     
     echo -e ""
     success "Project created successfully!"
     info "Next steps:"
     echo -e "  cd $project_name"
     echo -e "  jv compile"
-    echo -e "  jv run Main"
+    if [[ -n "$package_name" ]]; then
+        echo -e "  jv run $package_name.Main"
+    else
+        echo -e "  jv run Main"
+    fi
 }
 
 # Build classpath from lib directory
