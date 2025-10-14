@@ -129,10 +129,10 @@ jv create <project-name> [--template <template-name>]
 
 ```bash
 # Phase 1 (Shell version)
-curl -fsSL https://raw.githubusercontent.com/yourusername/jv/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/copydataai/jv/main/install.sh | bash
 
 # Or manual
-git clone https://github.com/yourusername/jv.git
+git clone https://github.com/copydataai/jv.git
 cd jv
 chmod +x jv.sh
 sudo ln -s $(pwd)/jv.sh /usr/local/bin/jv
