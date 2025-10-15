@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  /* JV Color Palette */
+  --dark-moss-green: #606c38;
+  --dark-moss-green-100: #13160b;
+  --dark-moss-green-200: #262b16;
+  --dark-moss-green-300: #394121;
+  --dark-moss-green-400: #4c562c;
+  --dark-moss-green-500: #606c38;
+  --dark-moss-green-600: #88994f;
+  --dark-moss-green-700: #a9b876;
+  --dark-moss-green-800: #c5d0a3;
+  --dark-moss-green-900: #e2e7d1;
+
+  --pakistan-green: #283618;
+  --pakistan-green-100: #080b05;
+  --pakistan-green-200: #101509;
+  --pakistan-green-300: #18200e;
+  --pakistan-green-400: #1f2a13;
+  --pakistan-green-500: #283618;
+  --pakistan-green-600: #547133;
+  --pakistan-green-700: #80ac4d;
+  --pakistan-green-800: #aac987;
+  --pakistan-green-900: #d5e4c3;
+
+  --cornsilk: #fefae0;
+  --cornsilk-100: #5d5103;
+  --cornsilk-200: #baa206;
+  --cornsilk-300: #f8dc27;
+  --cornsilk-400: #fbeb84;
+  --cornsilk-500: #fefae0;
+  --cornsilk-600: #fefbe7;
+  --cornsilk-700: #fefced;
+  --cornsilk-800: #fffdf3;
+  --cornsilk-900: #fffef9;
+
+  --earth-yellow: #dda15e;
+  --earth-yellow-100: #34210b;
+  --earth-yellow-200: #684216;
+  --earth-yellow-300: #9d6321;
+  --earth-yellow-400: #d1842c;
+  --earth-yellow-500: #dda15e;
+  --earth-yellow-600: #e4b57f;
+  --earth-yellow-700: #ebc79f;
+  --earth-yellow-800: #f1dabf;
+  --earth-yellow-900: #f8ecdf;
+
+  --tigers-eye: #bc6c25;
+  --tigers-eye-100: #251507;
+  --tigers-eye-200: #4b2b0f;
+  --tigers-eye-300: #704016;
+  --tigers-eye-400: #96561e;
+  --tigers-eye-500: #bc6c25;
+  --tigers-eye-600: #d98840;
+  --tigers-eye-700: #e3a570;
+  --tigers-eye-800: #ecc3a0;
+  --tigers-eye-900: #f6e1cf;
+
+  /* Semantic colors */
+  --background: var(--cornsilk);
+  --foreground: var(--pakistan-green);
+  --text-secondary: var(--dark-moss-green);
+  --border: var(--dark-moss-green-600);
+  --border-subtle: var(--earth-yellow);
+  --card-bg: var(--cornsilk-900);
+  --hover-bg: var(--pakistan-green-900);
+  --code-bg: var(--pakistan-green);
+  --code-text: var(--cornsilk);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
