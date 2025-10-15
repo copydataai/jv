@@ -1,154 +1,73 @@
-# JV is npm but for java
-
-> jv is the npm but for java
-
-## Description
-A simple java wrapper for daily tasks
-
-
-allows you to use java as a wrapper of java for the creation of simple java projects like university 
-
-
-## Pain
-As a computer Science student all my teachers use Eclipse as IDE but I don't like to install software that makes all this I would prefer a CLI and use pure NeoVim or Emacs, but they have their ecosystem like maven, gradle and jake all of them becoming so big that are mainly adopted for big projects.
-
-
-### Solution
-JV is a simple java wrapper for daily tasks, college student that wants to user the CLI without to have to worry about all the arguments and mkdir, just worry to compile, run and check that works without to have to worry about the arguments and mkdir, configuration files, etc.
+<div align="center">
+  <img src="jv.png" alt="JV Logo" width="200"/>
+  
+  # JV
+  
+  **The simple Java build tool for students and early releases**
+  
+  [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+  [![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)](https://www.gnu.org/software/bash/)
+  
+  *An alternative to Maven, Gradle, and Ant for simple projects*
+  
+</div>
 
 ---
 
-## Development Roadmap
+## ⚡ What is JV?
 
-### Phase 1: Shell-Based MVP (Simple Java Wrapper)
+JV is a lightweight Java build tool designed for **university assignments**, **prototyping**, and **simple projects** that don't need enterprise complexity.
 
-**Goal**: Basic project management for university assignments
+### Why JV?
 
-**Commands**:
-- `jv create <project-name> [package]` - Create directory + initialize project (optionally with package structure)
-- `jv init` - Initialize project in current directory (creates `src/`, `bin/`, `lib/` structure)
-- `jv compile [package.ClassName]` - Compile all or specific Java files
-- `jv run <package.ClassName> [args...]` - Run compiled programs (auto-compiles if needed)
-- `jv clean` - Remove all compiled `.class` files
-- `jv help` - Show usage and available commands
+- **⚡ Fast Setup** - Get started in under 1 minute
+- **🎯 Zero Configuration** - Convention over configuration
+- **📦 Simple Dependencies** - Just drop JARs in `lib/`
+- **🧑‍🎓 Student Friendly** - No steep learning curve
 
-**Features**:
-- Convention-based directory structure (no complex config files)
-- Auto-detect and include JARs from `lib/` folder
-- Simple `jv.json` config file for project metadata
-- Pass-through arguments to Java programs
-- Clear error messages for compilation failures
+### The Problem
 
-**Target Use Case**: Single or few Java files for university assignments
+As a Computer Science student, many courses require Eclipse or complex build tools like Maven and Gradle. But these tools are:
+- **Overkill** for simple assignments
+- **Time-consuming** to set up
+- **Complex** with steep learning curves
+- **Verbose** with XML or DSL configuration files
 
----
+### The Solution
 
-### Phase 2: Go Implementation (Cross-Platform & Enhanced)
+JV provides a simple CLI wrapper around `javac` and `java` that handles:
+- Project structure creation
+- Compilation with proper classpaths
+- Running programs with arguments
+- Managing external JAR dependencies
 
-**Goal**: Rewrite in Go for better performance and cross-platform support
-
-**Improvements**:
-- Single binary distribution (no bash dependency)
-- Windows, Linux, and macOS support
-- Faster execution and better error handling
-- Colored terminal output for better UX
-- Basic dependency management (download JARs from URLs)
-- Watch mode: `jv run --watch` (auto-recompile on file changes)
-- Better classpath management and Java version detection
-
-**New Commands**:
-- `jv add <jar-url-or-path>` - Add external JAR dependencies
-- `jv test [TestClass]` - Run JUnit tests without complex setup
-- `jv watch` - Auto-compile on file changes
-- `jv version` - Show JV and detected Java version
+**No configuration files. No XML. No DSL. Just code.**
 
 ---
 
-### Phase 3: Template System (Cookiecutter-Style Projects)
+## 🚀 Quick Start
 
-**Goal**: Support different project types and architectures
-
-**Enhanced `jv create` Command**:
-```bash
-jv create <project-name> [--template <template-name>]
-```
-
-**Available Templates**:
-
-1. **`simple`** (default)
-   - Single package structure
-   - One Main.java file
-   - Perfect for university assignments
-
-2. **`console-app`**
-   - Multi-class console application
-   - Input/output utilities pre-configured
-   - Example command-line argument parsing
-
-3. **`microservice`**
-   - Lightweight HTTP server (using Javalin or similar)
-   - RESTful API structure
-   - Basic routing and JSON handling
-   - Docker configuration included
-
-4. **`mvc`**
-   - Model-View-Controller structure
-   - Separation of concerns setup
-   - Configuration for web apps
-
-5. **`data-structures`**
-   - Pre-configured for algorithms and data structures practice
-   - Test harness included
-   - Common interfaces (List, Stack, Queue, etc.)
-
-6. **`desktop`**
-   - JavaFX or Swing setup
-   - GUI application boilerplate
-   - Event handling examples
-
-7. **`cli-tool`**
-   - Command-line application with subcommands
-   - Argument parsing library included
-   - Professional CLI structure
-
-**Template Features**:
-- Each template includes README with setup instructions
-- Pre-configured dependencies in `jv.json`
-- Sample code and project structure
-- Best practices for that specific use case
-- Optional GitHub Actions CI/CD workflows
-
-**Template Management**:
-- `jv templates list` - Show available templates
-- `jv templates show <name>` - Display template details
-- Custom templates: Support for user-defined templates in `~/.jv/templates/`
-
----
-
-## Installation
+### Installation
 
 ```bash
-# Phase 1 (Shell version)
+# Quick install (recommended)
 curl -fsSL https://raw.githubusercontent.com/copydataai/jv/main/install.sh | bash
 
-# Or manual
+# Or manual installation
 git clone https://github.com/copydataai/jv.git
 cd jv
 chmod +x jv.sh
 sudo ln -s $(pwd)/jv.sh /usr/local/bin/jv
 ```
 
-## Quick Start
+### Basic Usage
 
 ```bash
-# Create a new project (simple, no package)
+# Create a new project
 jv create my-assignment
 
 # Create with package structure
 jv create my-assignment ie.atu.sw
-
-# Or interactive (will prompt for package)
-jv create my-assignment
 
 # Compile and run
 cd my-assignment
@@ -160,42 +79,101 @@ cp professor-library.jar lib/
 # Compile with dependencies
 jv compile
 
-# Run tests
-jv test
+# Clean build artifacts
+jv clean
 ```
 
 ---
 
-## Why JV over Maven/Gradle?
+## 📚 Commands
 
-| Feature | JV | Maven | Gradle |
-|---------|-----|-------|--------|
-| Setup time | < 1 minute | 5-10 minutes | 5-10 minutes |
-| Config complexity | Minimal/None | XML (verbose) | Groovy/Kotlin DSL |
-| Learning curve | Minimal | Steep | Steep |
-| Best for | University assignments, small projects | Enterprise, large projects | Enterprise, Android |
-| Dependencies | Drop JARs in `lib/` | XML declaration | DSL declaration |
+| Command | Description |
+|---------|-------------|
+| `jv create <name> [package]` | Create new project with optional package structure |
+| `jv init` | Initialize project in current directory |
+| `jv compile [ClassName]` | Compile all or specific Java files |
+| `jv run <ClassName> [args...]` | Run compiled program (auto-compiles if needed) |
+| `jv clean` | Remove all `.class` files |
+| `jv help` | Show usage and available commands |
 
 ---
 
-## Examples
+## ✨ Features
 
-See [EXAMPLES.md](EXAMPLES.md) for detailed examples including:
-- University assignments with packages
-- Using external JAR libraries
-- Multi-class projects
-- Command-line argument handling
+- ✅ **Convention-based** directory structure (`src/`, `bin/`, `lib/`)
+- ✅ **Auto-detect** and include JARs from `lib/` folder
+- ✅ **Simple** `jv.json` config file for project metadata
+- ✅ **Pass-through** arguments to Java programs
+- ✅ **Clear** error messages for compilation failures
+- ✅ **Zero** external dependencies (just bash and Java)
 
-## Project Status
+---
 
-✅ **Phase 1** - Complete! Shell-based MVP is ready to use
-🚧 **Phase 2** - Go implementation (planned)
-📋 **Phase 3** - Template system (planned)
+## 📊 Why JV over Maven/Gradle?
 
-## Contribute
+| Feature | JV | Maven | Gradle |
+|---------|-----|-------|--------|
+| **Setup time** | < 1 minute | 5-10 minutes | 5-10 minutes |
+| **Config complexity** | Minimal/None | XML (verbose) | Groovy/Kotlin DSL |
+| **Learning curve** | Minimal | Steep | Steep |
+| **Best for** | University assignments, small projects | Enterprise, large projects | Enterprise, Android |
+| **Dependencies** | Drop JARs in `lib/` | XML declaration | DSL declaration |
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+---
 
-## License
+## 🗺️ Roadmap
 
-MIT License - feel free to use in your projects!
+### ✅ Phase 1: Shell-Based MVP (Current)
+- Basic project management for university assignments
+- Simple CLI commands for create, compile, run, clean
+- Convention-based directory structure
+- JAR dependency support
+
+### 🚧 Phase 2: Go Implementation (Planned)
+- Single binary distribution (Windows, Linux, macOS)
+- Faster execution and better error handling
+- Colored terminal output
+- Watch mode for auto-recompilation
+- Enhanced dependency management
+
+### 📋 Phase 3: Template System (Planned)
+- Project templates (console-app, microservice, mvc, etc.)
+- `jv create --template <name>` command
+- Custom user-defined templates
+- Best practices and boilerplate code
+
+---
+
+## 📖 Documentation
+
+- **[Examples](EXAMPLES.md)** - Detailed usage examples
+- **[Contributing](CONTRIBUTING.md)** - Contribution guidelines
+- **[Changelog](CHANGELOG.md)** - Version history and updates
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Whether it's:
+- 🐛 Bug reports
+- 💡 Feature requests
+- 📝 Documentation improvements
+- 🔧 Code contributions
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## 📄 License
+
+MIT License - feel free to use JV in your projects!
+
+---
+
+<div align="center">
+  
+  **Made with ❤️ for students and developers**
+  
+  [Website](https://jv.copydataai.com) • [GitHub](https://github.com/copydataai/jv) • [Examples](EXAMPLES.md)
+  
+</div>
