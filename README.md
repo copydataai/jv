@@ -25,7 +25,7 @@ JV is a simple java wrapper for daily tasks, college student that wants to user 
 **Goal**: Basic project management for university assignments
 
 **Commands**:
-- `jv create <project-name>` - Create directory + initialize project in one step
+- `jv create <project-name> [package]` - Create directory + initialize project (optionally with package structure)
 - `jv init` - Initialize project in current directory (creates `src/`, `bin/`, `lib/` structure)
 - `jv compile [package.ClassName]` - Compile all or specific Java files
 - `jv run <package.ClassName> [args...]` - Run compiled programs (auto-compiles if needed)
@@ -141,11 +141,14 @@ sudo ln -s $(pwd)/jv.sh /usr/local/bin/jv
 ## Quick Start
 
 ```bash
-# Create a new project
+# Create a new project (simple, no package)
 jv create my-assignment
 
-# Or with a template (Phase 3)
-jv create my-api --template microservice
+# Create with package structure
+jv create my-assignment ie.atu.sw
+
+# Or interactive (will prompt for package)
+jv create my-assignment
 
 # Compile and run
 cd my-assignment
