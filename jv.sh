@@ -285,7 +285,16 @@ run_java() {
     local args=("$@")
     
     if [[ -z "$class_name" ]]; then
-        error "Class name required. Usage: jv run <ClassName> [args...]"
+        # Try to read mainClass from jv.json
+        if [[ -f "$JV_CONFIG" ]]; then
+            class_name=$(jq -r '.mainClass // empty' "$JV_CONFIG" 2>/dev/null)
+            if [[ -z "$class_name" ]]; then
+                error "No class name provided and no mainClass found in jv.json. Usage: jv run <ClassName> [args...]"
+            fi
+            info "Using mainClass from jv.json: $class_name"
+        else
+            error "Class name required. Usage: jv run <ClassName> [args...]"
+        fi
     fi
     
     check_java
