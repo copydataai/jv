@@ -231,6 +231,50 @@ JAVA
     assert_contains "$output" "name array main"
 }
 
+test_run_infers_main_with_no_space_varargs_signature() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/com/example"
+    cd "$TMP_ROOT/app"
+    cat > src/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String... args) {
+        System.out.println("no-space varargs main");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" run)"
+
+    assert_contains "$output" "Main class: com.example.App"
+    assert_contains "$output" "no-space varargs main"
+}
+
+test_run_ignores_block_comment_marker_inside_string_literal() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/com/example"
+    cd "$TMP_ROOT/app"
+    cat > src/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    private static final String MARKER = "/*";
+
+    public static void main(String[] args) {
+        System.out.println("string marker main");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" run)"
+
+    assert_contains "$output" "Main class: com.example.App"
+    assert_contains "$output" "string marker main"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -240,6 +284,8 @@ main() {
     test_run_ignores_block_commented_plain_main_signatures
     test_run_infers_main_with_spaced_array_signature
     test_run_infers_main_with_name_array_signature
+    test_run_infers_main_with_no_space_varargs_signature
+    test_run_ignores_block_comment_marker_inside_string_literal
     echo "All tests passed"
 }
 

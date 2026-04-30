@@ -270,17 +270,44 @@ class_name_for_file() {
 
 find_main_classes() {
     local source_root="$1"
-    local main_signature_regex='public[[:space:]]+static[[:space:]]+void[[:space:]]+main[[:space:]]*\([[:space:]]*String[[:space:]]*(\[\]|[[:space:]]+\.\.\.)?[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\[\])?[[:space:]]*\)'
+    local main_signature_regex='public[[:space:]]+static[[:space:]]+void[[:space:]]+main[[:space:]]*\([[:space:]]*String[[:space:]]*(\[\]|\.\.\.)?[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\[\])?[[:space:]]*\)'
     [[ -d "$source_root" ]] || return 0
 
     while IFS= read -r -d '' file; do
         if awk '
+            function neutralize_strings(text,    i, ch, prev, masked, in_string) {
+                masked = ""
+                prev = ""
+                in_string = 0
+                for (i = 1; i <= length(text); i++) {
+                    ch = substr(text, i, 1)
+                    if (in_string) {
+                        if (ch == "\"" && prev != "\\") {
+                            in_string = 0
+                        }
+                        masked = masked " "
+                    } else if (ch == "\"") {
+                        in_string = 1
+                        masked = masked " "
+                    } else {
+                        masked = masked ch
+                    }
+                    if (ch == "\\" && prev == "\\") {
+                        prev = ""
+                    } else {
+                        prev = ch
+                    }
+                }
+                return masked
+            }
+
             {
                 line = $0
                 visible = ""
                 while (length(line) > 0) {
                     if (in_block_comment) {
-                        end = index(line, "*/")
+                        search_line = neutralize_strings(line)
+                        end = index(search_line, "*/")
                         if (end == 0) {
                             line = ""
                         } else {
@@ -288,8 +315,9 @@ find_main_classes() {
                             in_block_comment = 0
                         }
                     } else {
-                        line_comment = index(line, "//")
-                        block_comment = index(line, "/*")
+                        search_line = neutralize_strings(line)
+                        line_comment = index(search_line, "//")
+                        block_comment = index(search_line, "/*")
                         if (line_comment > 0 && (block_comment == 0 || line_comment < block_comment)) {
                             visible = visible substr(line, 1, line_comment - 1)
                             line = ""
