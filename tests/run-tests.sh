@@ -666,8 +666,11 @@ test_help_lists_diagnostics_commands() {
 
     assert_contains "$output" "explain [ClassName]           Show the detected build/run plan without running"
     assert_contains "$output" "doctor                       Inspect Java project state and possible entrypoints"
+    assert_contains "$output" "run [ClassName] [args...]     Infer, explain, compile, and run"
     assert_contains "$output" "remember main <ClassName>      Remember a preferred main class in .jv/"
     assert_contains "$output" "forget main                    Remove the remembered main class"
+    assert_contains "$output" ".jv/          Generated JV memory after successful runs"
+    assert_not_contains "$output" ".jv/          Generated JV memory after explain/run"
     assert_contains "$output" "jv run                                # Infer, explain, compile, and run"
     assert_contains "$output" "jv explain                            # Show what JV would do"
     assert_contains "$output" "jv doctor                             # Inspect detected project state"

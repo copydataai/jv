@@ -197,7 +197,7 @@ show_help() {
     echo -e "  ${GREEN}explain${NC} [ClassName]           Show the detected build/run plan without running"
     echo -e "  ${GREEN}doctor${NC}                       Inspect Java project state and possible entrypoints"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
-    echo -e "  ${GREEN}run${NC} <ClassName> [args...]     Run compiled Java program"
+    echo -e "  ${GREEN}run${NC} [ClassName] [args...]     Infer, explain, compile, and run"
     echo -e "  ${GREEN}remember${NC} main <ClassName>      Remember a preferred main class in .jv/"
     echo -e "  ${GREEN}forget${NC} main                    Remove the remembered main class"
     echo -e "  ${GREEN}clean${NC}                         Remove all compiled .class files"
@@ -220,7 +220,7 @@ show_help() {
     echo -e "  src/          Source files (.java)"
     echo -e "  bin/          Compiled files (.class)"
     echo -e "  lib/          External JARs (auto-detected)"
-    echo -e "  .jv/          Generated JV memory after explain/run"
+    echo -e "  .jv/          Generated JV memory after successful runs"
     echo -e ""
     echo -e "${BLUE}Learn more:${NC} https://github.com/copydataai/jv"
 }
