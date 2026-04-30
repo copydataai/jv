@@ -24,9 +24,7 @@ fi
 
 # Configuration
 JV_DIR=".jv"
-# shellcheck disable=SC2034 # Reserved for upcoming runner-memory state paths.
 JV_STATE="$JV_DIR/state.json"
-# shellcheck disable=SC2034 # Reserved for upcoming runner-memory run history paths.
 JV_RUNS="$JV_DIR/runs.jsonl"
 SRC_DIR="src"
 BIN_DIR="bin"
@@ -48,6 +46,42 @@ info() {
 
 warn() {
     echo -e "${YELLOW}Warning:${NC} $1"
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+ensure_jv_dir() {
+    mkdir -p "$JV_DIR"
+}
+
+write_state() {
+    local shape="$1"
+    local main_class="$2"
+    local build_command="$3"
+    local run_command="$4"
+
+    ensure_jv_dir
+    cat > "$JV_STATE" <<EOF
+{
+  "schemaVersion": 1,
+  "projectShape": "$(json_escape "$shape")",
+  "lastSuccessfulMainClass": "$(json_escape "$main_class")",
+  "lastPlan": {
+    "build": "$(json_escape "$build_command")",
+    "run": "$(json_escape "$run_command")"
+  }
+}
+EOF
+}
+
+append_run_event() {
+    local event="$1"
+    local detail="$2"
+
+    ensure_jv_dir
+    printf '{"event":"%s","detail":"%s"}\n' "$(json_escape "$event")" "$(json_escape "$detail")" >> "$JV_RUNS"
 }
 
 # Check if Java is installed
@@ -507,6 +541,11 @@ run_java() {
     
     # Run the program
     java -cp "$classpath" "$class_name" "${args[@]}"
+
+    local build_command="javac -d $BIN_DIR -cp $classpath <sources>"
+    local run_command="java -cp $classpath $class_name"
+    write_state "$shape" "$class_name" "$build_command" "$run_command"
+    append_run_event "executed" "$run_command"
 }
 
 # Clean compiled files

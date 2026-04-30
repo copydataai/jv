@@ -319,6 +319,27 @@ JAVA
     assert_not_exists "$TMP_ROOT/app/bin/Main.class"
 }
 
+test_run_writes_jv_memory() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("memory");
+    }
+}
+JAVA
+
+    "$JV" run >"$TMP_ROOT/jv-test-memory.out"
+
+    [[ -f "$TMP_ROOT/app/.jv/state.json" ]] || fail "Expected .jv/state.json"
+    [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"projectShape": "plain-java"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"lastSuccessfulMainClass": "Main"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"event":"executed"'
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -332,6 +353,7 @@ main() {
     test_run_ignores_block_comment_marker_inside_string_literal
     test_run_detects_main_after_block_comment_with_quote_before_terminator
     test_explain_prints_plan_without_compiling
+    test_run_writes_jv_memory
     echo "All tests passed"
 }
 
