@@ -70,6 +70,7 @@ show_help() {
     echo -e "${BLUE}Commands:${NC}"
     echo -e "  ${GREEN}create${NC} <project-name> [package]  Create a new Java project (mkdir + init)"
     echo -e "  ${GREEN}init${NC}                          Initialize project in current directory"
+    echo -e "  ${GREEN}explain${NC} [ClassName]           Show detected build/run plan without compiling"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} <ClassName> [args...]     Run compiled Java program"
     echo -e "  ${GREEN}clean${NC}                         Remove all compiled .class files"
@@ -80,6 +81,7 @@ show_help() {
     echo -e "  jv create my-assignment              # Create new project"
     echo -e "  jv create my-app ie.atu.sw           # Create with package"
     echo -e "  jv init                               # Initialize in current dir"
+    echo -e "  jv explain                            # Show inferred build/run plan"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
     echo -e "  jv run ie.atu.sw.Main arg1 arg2      # Run with arguments"
@@ -368,6 +370,61 @@ select_main_class() {
     error "Pass one explicitly: jv run <MainClass>"
 }
 
+print_plain_java_plan() {
+    local source_root="$1"
+    local class_name="$2"
+    local classpath
+    classpath="$(build_classpath)"
+
+    echo "JV detected: plain Java project"
+    echo "Source roots: $source_root"
+    if [[ -d "$LIB_DIR" ]]; then
+        local jar_count
+        jar_count=$(find "$LIB_DIR" -name "*.jar" 2>/dev/null | wc -l | xargs)
+        echo "Libraries: $jar_count jars from $LIB_DIR/"
+    else
+        echo "Libraries: 0 jars from $LIB_DIR/"
+    fi
+    echo "Main class: $class_name"
+    echo "Build path: javac -d $BIN_DIR -cp $classpath <sources>"
+    echo "Run path: java -cp $classpath $class_name"
+}
+
+print_maven_plan() {
+    local source_root="$1"
+    local class_name="$2"
+
+    echo "JV detected: Maven project"
+    echo "Source roots: $source_root"
+    echo "Main class: $class_name"
+    echo "Build path: mvn compile"
+    echo "Run path: mvn exec:java -Dexec.mainClass=$class_name"
+}
+
+explain_project() {
+    local requested_class="${1:-}"
+    local shape
+    local source_root
+    local class_name
+
+    shape="$(detect_project_shape)"
+    source_root="$(source_root_for_shape "$shape")"
+
+    case "$shape" in
+        plain-java)
+            class_name="$(select_main_class "$requested_class" "$source_root")"
+            print_plain_java_plan "$source_root" "$class_name"
+            ;;
+        maven)
+            class_name="$(select_main_class "$requested_class" "$source_root")"
+            print_maven_plan "$source_root" "$class_name"
+            ;;
+        *)
+            error "No Java project detected. Checked for pom.xml and $SRC_DIR/."
+            ;;
+    esac
+}
+
 # Compile Java files
 compile_java() {
     check_java
@@ -443,11 +500,7 @@ run_java() {
     local classpath
     classpath=$(build_classpath)
     
-    echo "JV detected: plain Java project"
-    echo "Source roots: $source_root"
-    echo "Main class: $class_name"
-    echo "Build path: javac -d $BIN_DIR -cp $(build_classpath) <sources>"
-    echo "Run path: java -cp $(build_classpath) $class_name"
+    print_plain_java_plan "$source_root" "$class_name"
     echo ""
     info "Running $class_name..."
     echo -e ""
@@ -487,6 +540,9 @@ main() {
             ;;
         init)
             init_project "${1:-$(basename "$PWD")}"
+            ;;
+        explain)
+            explain_project "$@"
             ;;
         compile)
             compile_java "$@"

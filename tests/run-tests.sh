@@ -297,6 +297,28 @@ JAVA
     assert_contains "$output" "after tricky comment"
 }
 
+test_explain_prints_plan_without_compiling() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("hello");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" explain)"
+
+    assert_contains "$output" "JV detected: plain Java project"
+    assert_contains "$output" "Main class: Main"
+    assert_contains "$output" "Build path: javac -d bin"
+    assert_contains "$output" "Run path: java -cp bin Main"
+    assert_not_exists "$TMP_ROOT/app/bin/Main.class"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -309,6 +331,7 @@ main() {
     test_run_infers_main_with_no_space_varargs_signature
     test_run_ignores_block_comment_marker_inside_string_literal
     test_run_detects_main_after_block_comment_with_quote_before_terminator
+    test_explain_prints_plan_without_compiling
     echo "All tests passed"
 }
 
