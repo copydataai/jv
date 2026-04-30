@@ -24,7 +24,9 @@ fi
 
 # Configuration
 JV_DIR=".jv"
+# shellcheck disable=SC2034 # Reserved for upcoming runner-memory state paths.
 JV_STATE="$JV_DIR/state.json"
+# shellcheck disable=SC2034 # Reserved for upcoming runner-memory run history paths.
 JV_RUNS="$JV_DIR/runs.jsonl"
 SRC_DIR="src"
 BIN_DIR="bin"
@@ -186,7 +188,7 @@ create_project() {
         echo -e "${BLUE}Do you want to create a package structure?${NC}"
         echo -e "  Examples: ie.atu.sw, com.example, org.myapp"
         echo -e "  Press Enter to skip (no package)"
-        read -p "Package name: " package_name
+        read -r -p "Package name: " package_name
         
         # Trim whitespace
         package_name="$(echo -e "${package_name}" | xargs)"

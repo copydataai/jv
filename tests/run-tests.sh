@@ -30,6 +30,7 @@ assert_not_exists() {
 }
 
 setup_tmp() {
+    cleanup_tmp
     TMP_ROOT="$(mktemp -d)"
 }
 
