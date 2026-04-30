@@ -67,9 +67,71 @@ test_create_does_not_write_jv_json() {
     assert_not_exists "$TMP_ROOT/demo/jv.json"
 }
 
+test_run_infers_single_plain_main_class() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/com/example"
+    cd "$TMP_ROOT/app"
+    cat > src/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println("inferred main");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" run)"
+
+    assert_contains "$output" "JV detected: plain Java project"
+    assert_contains "$output" "Main class: com.example.App"
+    assert_contains "$output" "inferred main"
+}
+
+test_run_refuses_multiple_plain_main_classes() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/com/example"
+    cd "$TMP_ROOT/app"
+    cat > src/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/com/example/Tool.java <<'JAVA'
+package com.example;
+
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected ambiguous main class run to fail"
+    fi
+    assert_contains "$output" "Multiple main classes found"
+    assert_contains "$output" "com.example.App"
+    assert_contains "$output" "com.example.Tool"
+    assert_contains "$output" "jv run <MainClass>"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
+    test_run_infers_single_plain_main_class
+    test_run_refuses_multiple_plain_main_classes
     echo "All tests passed"
 }
 

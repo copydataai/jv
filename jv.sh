@@ -220,13 +220,93 @@ create_project() {
 build_classpath() {
     local classpath="$BIN_DIR"
     
-    if [[ -d "$LIB_DIR" ]] && [[ "$(ls -A $LIB_DIR/*.jar 2>/dev/null)" ]]; then
+    if [[ -d "$LIB_DIR" ]] && compgen -G "$LIB_DIR/*.jar" >/dev/null; then
         for jar in "$LIB_DIR"/*.jar; do
             classpath="$classpath:$jar"
         done
     fi
     
     echo -e "$classpath"
+}
+
+detect_project_shape() {
+    if [[ -f "pom.xml" ]]; then
+        echo "maven"
+    elif [[ -d "$SRC_DIR" ]]; then
+        echo "plain-java"
+    else
+        echo "unknown"
+    fi
+}
+
+source_root_for_shape() {
+    local shape="$1"
+    case "$shape" in
+        maven) echo "src/main/java" ;;
+        plain-java) echo "$SRC_DIR" ;;
+        *) echo "" ;;
+    esac
+}
+
+package_for_file() {
+    local file="$1"
+    local package_name
+    package_name=$(sed -n 's/^[[:space:]]*package[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_.]*\)[[:space:]]*;[[:space:]]*$/\1/p' "$file" | head -n 1)
+    echo "$package_name"
+}
+
+class_name_for_file() {
+    local file="$1"
+    local base
+    local package_name
+    base="$(basename "$file" .java)"
+    package_name="$(package_for_file "$file")"
+    if [[ -n "$package_name" ]]; then
+        echo "$package_name.$base"
+    else
+        echo "$base"
+    fi
+}
+
+find_main_classes() {
+    local source_root="$1"
+    [[ -d "$source_root" ]] || return 0
+
+    while IFS= read -r -d '' file; do
+        if grep -Eq 'public[[:space:]]+static[[:space:]]+void[[:space:]]+main[[:space:]]*\([[:space:]]*String(\[\]|[[:space:]]+\.\.\.)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)' "$file"; then
+            class_name_for_file "$file"
+        fi
+    done < <(find "$source_root" -name "*.java" -print0 2>/dev/null | sort -z)
+}
+
+select_main_class() {
+    local requested="$1"
+    local source_root="$2"
+
+    if [[ -n "$requested" ]]; then
+        echo "$requested"
+        return 0
+    fi
+
+    local mains=()
+    while IFS= read -r main_class; do
+        [[ -n "$main_class" ]] && mains+=("$main_class")
+    done < <(find_main_classes "$source_root")
+
+    if [[ ${#mains[@]} -eq 1 ]]; then
+        echo "${mains[0]}"
+        return 0
+    fi
+
+    if [[ ${#mains[@]} -eq 0 ]]; then
+        error "No main class found in $source_root. Pass one explicitly: jv run <MainClass>"
+    fi
+
+    echo "Multiple main classes found:" >&2
+    for main_class in "${mains[@]}"; do
+        echo "  $main_class" >&2
+    done
+    error "Pass one explicitly: jv run <MainClass>"
 }
 
 # Compile Java files
@@ -266,22 +346,25 @@ compile_java() {
 
 # Run Java program
 run_java() {
-    local class_name="$1"
-    shift || true
-    local args=("$@")
-    
-    if [[ -z "$class_name" ]]; then
-        local legacy_config="jv.json"
-        if [[ -f "$legacy_config" ]]; then
-            class_name=$(jq -r '.mainClass // empty' "$legacy_config" 2>/dev/null)
-            if [[ -z "$class_name" ]]; then
-                error "No class name provided and no mainClass found in jv.json. Usage: jv run <ClassName> [args...]"
-            fi
-            info "Using mainClass from jv.json: $class_name"
-        else
-            error "Class name required. Usage: jv run <ClassName> [args...]"
-        fi
+    local class_name="${1:-}"
+    if [[ $# -gt 0 ]]; then
+        shift
     fi
+    local args=("$@")
+    local shape
+    local source_root
+    shape="$(detect_project_shape)"
+    source_root="$(source_root_for_shape "$shape")"
+    
+    if [[ "$shape" == "unknown" ]]; then
+        error "No Java project detected. Run 'jv init' first."
+    fi
+
+    if [[ "$shape" != "plain-java" ]]; then
+        error "jv run currently supports plain Java projects only"
+    fi
+
+    class_name="$(select_main_class "$class_name" "$source_root")"
     
     check_java
     
@@ -301,6 +384,12 @@ run_java() {
     local classpath
     classpath=$(build_classpath)
     
+    echo "JV detected: plain Java project"
+    echo "Source roots: $source_root"
+    echo "Main class: $class_name"
+    echo "Build path: javac -d $BIN_DIR -cp $(build_classpath) <sources>"
+    echo "Run path: java -cp $(build_classpath) $class_name"
+    echo ""
     info "Running $class_name..."
     echo -e ""
     
