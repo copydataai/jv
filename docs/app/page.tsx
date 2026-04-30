@@ -50,47 +50,51 @@ export default function Home() {
           />
 
           <p className="text-xl sm:text-2xl text-[var(--text-secondary)]">
-            The simple Java build tool for students and early releases
+            Java middleware for explainable local runs
           </p>
 
           <div className="grid sm:grid-cols-2 gap-6 mt-12 text-left">
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">⚡</div>
               <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
-                Fast Setup
+                Explainable Detection
               </h3>
               <p className="text-[var(--text-secondary)] text-sm">
-                Get started in under 1 minute. No complex configuration needed.
+                Finds source roots, libraries, project shape, and main class
+                candidates before running.
               </p>
             </div>
 
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">🎯</div>
               <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
-                Zero Config
+                Maven Delegation
               </h3>
               <p className="text-[var(--text-secondary)] text-sm">
-                Convention over configuration. Just write code and run.
+                Runs plain Java directly and delegates Maven projects to compile
+                and exec:java.
               </p>
             </div>
 
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">📦</div>
               <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
-                Simple Dependencies
+                Plan First
               </h3>
               <p className="text-[var(--text-secondary)] text-sm">
-                Drop JAR files in the lib/ folder. No XML or DSL required.
+                Use jv explain to see the build and run path, or jv doctor to
+                inspect tools and entrypoints.
               </p>
             </div>
 
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">🧑‍🎓</div>
               <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
-                Student Friendly
+                Generated Memory
               </h3>
               <p className="text-[var(--text-secondary)] text-sm">
-                Perfect for university assignments and learning Java.
+                Successful runs write .jv/state.json and .jv/runs.jsonl for
+                humans and coding agents to inspect.
               </p>
             </div>
           </div>
@@ -106,7 +110,7 @@ export default function Home() {
           </div>
 
           <p className="text-sm text-[var(--text-secondary)] pt-4">
-            Alternative to Maven, Gradle, and Ant for simple projects
+            Sits between editors, agents, and Java toolchains
           </p>
         </div>
       </main>
@@ -114,7 +118,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-[var(--border-subtle)]/20 py-6 bg-[var(--background)]">
         <div className="max-w-5xl mx-auto px-6 text-center text-sm text-[var(--text-secondary)]">
-          <p>MIT License • Built for students and developers</p>
+          <p>MIT License • Built for Java projects, humans, and agents</p>
         </div>
       </footer>
     </div>

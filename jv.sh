@@ -29,6 +29,8 @@ JV_RUNS="$JV_DIR/runs.jsonl"
 SRC_DIR="src"
 BIN_DIR="bin"
 LIB_DIR="lib"
+RESOLVED_MAIN_CLASS=""
+RESOLVED_ARGS=()
 
 # Helper functions
 error() {
@@ -469,6 +471,15 @@ find_main_classes() {
     done < <(find "$source_root" -name "*.java" -print0 2>/dev/null | sort -z)
 }
 
+print_ambiguous_main_classes() {
+    local main_class
+
+    echo "Multiple main classes found:" >&2
+    for main_class in "$@"; do
+        echo "  $main_class" >&2
+    done
+}
+
 select_main_class() {
     local requested="$1"
     local source_root="$2"
@@ -519,18 +530,64 @@ select_main_class() {
         error "No main class found in $source_root. Pass one explicitly: jv run <MainClass>"
     fi
 
-    echo "Multiple main classes found:" >&2
+    print_ambiguous_main_classes "${mains[@]}"
+    error "Pass one explicitly: jv run <MainClass>"
+}
+
+resolve_main_invocation() {
+    local source_root="$1"
+    shift || true
+    local first_token="${1:-}"
+    local mains=()
+    local main_class
+
+    RESOLVED_MAIN_CLASS=""
+    RESOLVED_ARGS=()
+
+    if [[ $# -eq 0 ]]; then
+        RESOLVED_MAIN_CLASS="$(select_main_class "" "$source_root")"
+        return 0
+    fi
+    shift
+
+    while IFS= read -r main_class; do
+        [[ -n "$main_class" ]] && mains+=("$main_class")
+    done < <(find_main_classes "$source_root")
+
     for main_class in "${mains[@]}"; do
-        echo "  $main_class" >&2
+        if [[ "$first_token" == "$main_class" ]]; then
+            RESOLVED_MAIN_CLASS="$main_class"
+            RESOLVED_ARGS=("$@")
+            return 0
+        fi
     done
+
+    if [[ ${#mains[@]} -eq 1 ]]; then
+        RESOLVED_MAIN_CLASS="${mains[0]}"
+        RESOLVED_ARGS=("$first_token" "$@")
+        return 0
+    fi
+
+    if [[ ${#mains[@]} -eq 0 ]]; then
+        error "No main class found in $source_root. Pass one explicitly: jv run <MainClass>"
+    fi
+
+    print_ambiguous_main_classes "${mains[@]}"
     error "Pass one explicitly: jv run <MainClass>"
 }
 
 print_plain_java_plan() {
     local source_root="$1"
     local class_name="$2"
+    local run_args="${3:-}"
     local classpath
+    local run_path
     classpath="$(build_classpath)"
+    run_path="java -cp $classpath $class_name"
+
+    if [[ -n "$run_args" ]]; then
+        run_path="$run_path $run_args"
+    fi
 
     echo "JV detected: plain Java project"
     echo "Source roots: $source_root"
@@ -543,7 +600,7 @@ print_plain_java_plan() {
     fi
     echo "Main class: $class_name"
     echo "Build path: javac -d $BIN_DIR -cp $classpath <sources>"
-    echo "Run path: java -cp $classpath $class_name"
+    echo "Run path: $run_path"
 }
 
 print_maven_plan() {
@@ -578,22 +635,26 @@ join_maven_args() {
 }
 
 explain_project() {
-    local requested_class="${1:-}"
     local shape
     local source_root
     local class_name
+    local run_args
 
     shape="$(detect_project_shape)"
     source_root="$(source_root_for_shape "$shape")"
 
     case "$shape" in
         plain-java)
-            class_name="$(select_main_class "$requested_class" "$source_root")"
-            print_plain_java_plan "$source_root" "$class_name"
+            resolve_main_invocation "$source_root" "$@"
+            class_name="$RESOLVED_MAIN_CLASS"
+            run_args="$(join_maven_args "${RESOLVED_ARGS[@]}")"
+            print_plain_java_plan "$source_root" "$class_name" "$run_args"
             ;;
         maven)
-            class_name="$(select_main_class "$requested_class" "$source_root")"
-            print_maven_plan "$source_root" "$class_name"
+            resolve_main_invocation "$source_root" "$@"
+            class_name="$RESOLVED_MAIN_CLASS"
+            run_args="$(join_maven_args "${RESOLVED_ARGS[@]}")"
+            print_maven_plan "$source_root" "$class_name" "$run_args"
             ;;
         *)
             error "No Java project detected. Checked for pom.xml and $SRC_DIR/."
@@ -684,11 +745,8 @@ compile_java() {
 
 # Run Java program
 run_java() {
-    local class_name="${1:-}"
-    if [[ $# -gt 0 ]]; then
-        shift
-    fi
-    local args=("$@")
+    local class_name
+    local args=()
     local shape
     local source_root
     shape="$(detect_project_shape)"
@@ -698,7 +756,9 @@ run_java() {
         error "No Java project detected. Checked for pom.xml and $SRC_DIR/."
     fi
 
-    class_name="$(select_main_class "$class_name" "$source_root")"
+    resolve_main_invocation "$source_root" "$@"
+    class_name="$RESOLVED_MAIN_CLASS"
+    args=("${RESOLVED_ARGS[@]}")
 
     if [[ "$shape" == "maven" ]]; then
         if ! command -v mvn >/dev/null 2>&1; then
@@ -764,7 +824,9 @@ run_java() {
     local classpath
     classpath=$(build_classpath)
     
-    print_plain_java_plan "$source_root" "$class_name"
+    local plain_args
+    plain_args="$(join_maven_args "${args[@]}")"
+    print_plain_java_plan "$source_root" "$class_name" "$plain_args"
     echo ""
     info "Running $class_name..."
     echo -e ""
@@ -778,6 +840,9 @@ run_java() {
     if [[ $java_status -eq 0 ]]; then
         local build_command="javac -d $BIN_DIR -cp $classpath <sources>"
         local run_command="java -cp $classpath $class_name"
+        if [[ -n "$plain_args" ]]; then
+            run_command="$run_command $plain_args"
+        fi
         if ! write_state "$shape" "$class_name" "$build_command" "$run_command" || ! append_run_event "executed" "$run_command"; then
             warn "Could not write JV memory to $JV_DIR/"
         fi
