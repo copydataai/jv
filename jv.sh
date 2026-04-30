@@ -49,7 +49,22 @@ warn() {
 }
 
 json_escape() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+    local byte
+    while read -r -a bytes; do
+        for byte in "${bytes[@]}"; do
+            case "$byte" in
+                08) printf '\\b' ;;
+                09) printf '\\t' ;;
+                0a) printf '\\n' ;;
+                0c) printf '\\f' ;;
+                0d) printf '\\r' ;;
+                22) printf '%s' "\\\"" ;;
+                5c) printf '%s' "\\\\" ;;
+                00|01|02|03|04|05|06|07|0b|0e|0f|1?) printf '\\u00%s' "$byte" ;;
+                *) printf '%b' "\\x$byte" ;;
+            esac
+        done
+    done < <(printf '%s' "$1" | LC_ALL=C od -An -tx1 -v)
 }
 
 ensure_jv_dir() {
@@ -62,7 +77,7 @@ write_state() {
     local build_command="$3"
     local run_command="$4"
 
-    ensure_jv_dir
+    ensure_jv_dir || return
     cat > "$JV_STATE" <<EOF
 {
   "schemaVersion": 1,
@@ -80,7 +95,7 @@ append_run_event() {
     local event="$1"
     local detail="$2"
 
-    ensure_jv_dir
+    ensure_jv_dir || return
     printf '{"event":"%s","detail":"%s"}\n' "$(json_escape "$event")" "$(json_escape "$detail")" >> "$JV_RUNS"
 }
 
@@ -540,12 +555,20 @@ run_java() {
     echo -e ""
     
     # Run the program
+    set +e
     java -cp "$classpath" "$class_name" "${args[@]}"
+    local java_status=$?
+    set -e
 
-    local build_command="javac -d $BIN_DIR -cp $classpath <sources>"
-    local run_command="java -cp $classpath $class_name"
-    write_state "$shape" "$class_name" "$build_command" "$run_command"
-    append_run_event "executed" "$run_command"
+    if [[ $java_status -eq 0 ]]; then
+        local build_command="javac -d $BIN_DIR -cp $classpath <sources>"
+        local run_command="java -cp $classpath $class_name"
+        if ! write_state "$shape" "$class_name" "$build_command" "$run_command" || ! append_run_event "executed" "$run_command"; then
+            warn "Could not write JV memory to $JV_DIR/"
+        fi
+    fi
+
+    return "$java_status"
 }
 
 # Clean compiled files

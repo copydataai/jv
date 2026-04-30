@@ -340,6 +340,80 @@ JAVA
     assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"event":"executed"'
 }
 
+test_run_memory_write_failure_preserves_success_exit() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("memory unavailable");
+    }
+}
+JAVA
+    touch .jv
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -ne 0 ]]; then
+        fail "Expected successful Java run to preserve exit 0 when memory write fails; got $status"
+    fi
+    assert_contains "$output" "memory unavailable"
+    assert_contains "$output" "Warning:"
+}
+
+test_run_escapes_control_characters_in_memory_json() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("escaped memory");
+    }
+}
+JAVA
+    jar cf "$TMP_ROOT/app/lib/control
+name.jar" -C "$TMP_ROOT/empty" .
+
+    "$JV" run >"$TMP_ROOT/jv-test-escaped-memory.out"
+
+    if command -v jq >/dev/null 2>&1; then
+        jq -e . "$TMP_ROOT/app/.jv/state.json" >/dev/null
+    else
+        assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" 'control\nname.jar'
+    fi
+}
+
+test_run_failure_does_not_write_success_memory() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("failing main");
+        System.exit(7);
+    }
+}
+JAVA
+
+    set +e
+    "$JV" run >"$TMP_ROOT/jv-test-failing-run.out" 2>&1
+    local status=$?
+    set -e
+
+    if [[ $status -ne 7 ]]; then
+        fail "Expected Java exit status 7; got $status"
+    fi
+    assert_contains "$(cat "$TMP_ROOT/jv-test-failing-run.out")" "failing main"
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -354,6 +428,9 @@ main() {
     test_run_detects_main_after_block_comment_with_quote_before_terminator
     test_explain_prints_plan_without_compiling
     test_run_writes_jv_memory
+    test_run_memory_write_failure_preserves_success_exit
+    test_run_escapes_control_characters_in_memory_json
+    test_run_failure_does_not_write_success_memory
     echo "All tests passed"
 }
 
