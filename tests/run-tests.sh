@@ -619,6 +619,30 @@ JAVA
     assert_contains "$output" "arg: two"
 }
 
+test_doctor_reports_project_state() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("doctor");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" doctor)"
+
+    assert_contains "$output" "JV doctor"
+    assert_contains "$output" "Project shape: plain-java"
+    assert_contains "$output" "Source roots: src"
+    assert_contains "$output" "Main class candidates:"
+    assert_contains "$output" "Main"
+    assert_contains "$output" "java:"
+    assert_contains "$output" "javac:"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -642,6 +666,7 @@ main() {
     test_remember_main_rejects_invalid_class_names
     test_forget_main_rejects_extra_args
     test_maven_explain_and_run
+    test_doctor_reports_project_state
     echo "All tests passed"
 }
 

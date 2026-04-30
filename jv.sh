@@ -598,6 +598,52 @@ explain_project() {
     esac
 }
 
+doctor_project() {
+    local shape
+    local source_root
+    shape="$(detect_project_shape)"
+    source_root="$(source_root_for_shape "$shape")"
+
+    echo "JV doctor"
+    echo "Project shape: $shape"
+    if [[ -n "$source_root" ]]; then
+        echo "Source roots: $source_root"
+    else
+        echo "Source roots: none detected"
+    fi
+
+    echo "Tools:"
+    if command -v java >/dev/null 2>&1; then
+        echo "  java: $(command -v java)"
+    else
+        echo "  java: missing"
+    fi
+    if command -v javac >/dev/null 2>&1; then
+        echo "  javac: $(command -v javac)"
+    else
+        echo "  javac: missing"
+    fi
+    if command -v mvn >/dev/null 2>&1; then
+        echo "  mvn: $(command -v mvn)"
+    else
+        echo "  mvn: missing"
+    fi
+
+    echo "Main class candidates:"
+    if [[ -n "$source_root" && -d "$source_root" ]]; then
+        local found=0
+        while IFS= read -r main_class; do
+            found=1
+            echo "  $main_class"
+        done < <(find_main_classes "$source_root")
+        if [[ $found -eq 0 ]]; then
+            echo "  none"
+        fi
+    else
+        echo "  none"
+    fi
+}
+
 # Compile Java files
 compile_java() {
     check_java
@@ -771,6 +817,9 @@ main() {
             ;;
         explain)
             explain_project "$@"
+            ;;
+        doctor)
+            doctor_project
             ;;
         compile)
             compile_java "$@"
