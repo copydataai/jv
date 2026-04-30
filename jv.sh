@@ -195,6 +195,7 @@ show_help() {
     echo -e "  ${GREEN}create${NC} <project-name> [package]  Create a new Java project (mkdir + init)"
     echo -e "  ${GREEN}init${NC}                          Initialize project in current directory"
     echo -e "  ${GREEN}explain${NC} [ClassName]           Show detected build/run plan without compiling"
+    echo -e "  ${GREEN}doctor${NC}                       Show project diagnostics"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} <ClassName> [args...]     Run compiled Java program"
     echo -e "  ${GREEN}remember${NC} main <MainClass>      Remember main class for ambiguous projects"
@@ -208,6 +209,7 @@ show_help() {
     echo -e "  jv create my-app ie.atu.sw           # Create with package"
     echo -e "  jv init                               # Initialize in current dir"
     echo -e "  jv explain                            # Show inferred build/run plan"
+    echo -e "  jv doctor                             # Show project diagnostics"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
     echo -e "  jv run ie.atu.sw.Main arg1 arg2      # Run with arguments"
@@ -819,6 +821,9 @@ main() {
             explain_project "$@"
             ;;
         doctor)
+            if [[ $# -ne 0 ]]; then
+                error "Usage: jv doctor"
+            fi
             doctor_project
             ;;
         compile)

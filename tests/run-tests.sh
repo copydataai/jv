@@ -643,6 +643,31 @@ JAVA
     assert_contains "$output" "javac:"
 }
 
+test_doctor_rejects_extra_args() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    set +e
+    local output
+    output="$("$JV" doctor extra 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected doctor with extra args to fail"
+    fi
+    assert_contains "$output" "Usage: jv doctor"
+}
+
+test_help_lists_diagnostics_commands() {
+    local output
+    output="$("$JV" help)"
+
+    assert_contains "$output" "doctor"
+    assert_contains "$output" "explain"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -667,6 +692,8 @@ main() {
     test_forget_main_rejects_extra_args
     test_maven_explain_and_run
     test_doctor_reports_project_state
+    test_doctor_rejects_extra_args
+    test_help_lists_diagnostics_commands
     echo "All tests passed"
 }
 
