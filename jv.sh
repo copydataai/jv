@@ -357,7 +357,7 @@ run_java() {
     source_root="$(source_root_for_shape "$shape")"
     
     if [[ "$shape" == "unknown" ]]; then
-        error "No Java project detected. Run 'jv init' first."
+        error "No Java project detected. Checked for pom.xml and $SRC_DIR/."
     fi
 
     if [[ "$shape" != "plain-java" ]]; then
