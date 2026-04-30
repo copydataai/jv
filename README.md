@@ -3,7 +3,7 @@
   
   # JV
   
-  **The simple Java build tool for students and early releases**
+  **Java middleware that turns hidden IDE/project state into one reliable action: build and run the latest code correctly.**
   
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
   [![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)](https://www.gnu.org/software/bash/)
@@ -16,7 +16,7 @@
 
 ## ⚡ What is JV?
 
-JV is a lightweight Java build tool designed for **university assignments**, **prototyping**, and **simple projects** that don't need enterprise complexity.
+JV is an explainable Java runner. It detects whether a project is plain Java or Maven, finds the source roots and main class candidates, shows the build/run plan, then runs the latest code through the correct toolchain.
 
 ### Why JV?
 
@@ -69,9 +69,9 @@ jv create my-assignment
 # Create with package structure
 jv create my-assignment ie.atu.sw
 
-# Compile and run
+# Infer, compile, and run
 cd my-assignment
-jv run ie.atu.sw.Main
+jv run
 
 # Add external library
 cp professor-library.jar lib/
@@ -92,9 +92,19 @@ jv clean
 | `jv create <name> [package]` | Create new project with optional package structure |
 | `jv init` | Initialize project in current directory |
 | `jv compile [ClassName]` | Compile all or specific Java files |
-| `jv run <ClassName> [args...]` | Run compiled program (auto-compiles if needed) |
+| `jv run [ClassName] [args...]` | Infer, explain, compile, and run the latest code |
+| `jv explain [ClassName]` | Show the detected build/run plan without running |
+| `jv doctor` | Inspect Java project state and possible entrypoints |
+| `jv remember main <ClassName>` | Remember a preferred main class in `.jv/` |
+| `jv forget main` | Remove the remembered main class |
 | `jv clean` | Remove all `.class` files |
 | `jv help` | Show usage and available commands |
+
+---
+
+### Generated JV Memory
+
+JV does not require a hand-written config file for normal projects. Source files and build tools are truth; `.jv/` is generated memory. JV writes `.jv/state.json` and `.jv/runs.jsonl` after successful runs so humans and coding agents can inspect what JV detected and executed.
 
 ---
 
@@ -102,7 +112,7 @@ jv clean
 
 - ✅ **Convention-based** directory structure (`src/`, `bin/`, `lib/`)
 - ✅ **Auto-detect** and include JARs from `lib/` folder
-- ✅ **Simple** `jv.json` config file for project metadata
+- ✅ **Generated** `.jv/` memory for detected project state and run history
 - ✅ **Pass-through** arguments to Java programs
 - ✅ **Clear** error messages for compilation failures
 - ✅ **Zero** external dependencies (just bash and Java)
