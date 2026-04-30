@@ -270,10 +270,11 @@ class_name_for_file() {
 
 find_main_classes() {
     local source_root="$1"
+    local main_signature_regex='public[[:space:]]+static[[:space:]]+void[[:space:]]+main[[:space:]]*\([[:space:]]*String[[:space:]]*(\[\]|[[:space:]]+\.\.\.)?[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\[\])?[[:space:]]*\)'
     [[ -d "$source_root" ]] || return 0
 
     while IFS= read -r -d '' file; do
-        if grep -Eq 'public[[:space:]]+static[[:space:]]+void[[:space:]]+main[[:space:]]*\([[:space:]]*String(\[\]|[[:space:]]+\.\.\.)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)' "$file"; then
+        if grep -Ev '^[[:space:]]*(//|/\*|\*|\*/)' "$file" | grep -Eq "$main_signature_regex"; then
             class_name_for_file "$file"
         fi
     done < <(find "$source_root" -name "*.java" -print0 2>/dev/null | sort -z)
