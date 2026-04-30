@@ -306,8 +306,7 @@ find_main_classes() {
                 visible = ""
                 while (length(line) > 0) {
                     if (in_block_comment) {
-                        search_line = neutralize_strings(line)
-                        end = index(search_line, "*/")
+                        end = index(line, "*/")
                         if (end == 0) {
                             line = ""
                         } else {

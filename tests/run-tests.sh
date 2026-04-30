@@ -275,6 +275,28 @@ JAVA
     assert_contains "$output" "string marker main"
 }
 
+test_run_detects_main_after_block_comment_with_quote_before_terminator() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/com/example"
+    cd "$TMP_ROOT/app"
+    cat > src/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    /* comment mentions "*/
+    public static void main(String[] args) {
+        System.out.println("after tricky comment");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" run)"
+
+    assert_contains "$output" "Main class: com.example.App"
+    assert_contains "$output" "after tricky comment"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -286,6 +308,7 @@ main() {
     test_run_infers_main_with_name_array_signature
     test_run_infers_main_with_no_space_varargs_signature
     test_run_ignores_block_comment_marker_inside_string_literal
+    test_run_detects_main_after_block_comment_with_quote_before_terminator
     echo "All tests passed"
 }
 
