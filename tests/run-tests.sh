@@ -57,8 +57,18 @@ test_create_compile_run_packaged_project() {
     assert_contains "$output" "  - beta"
 }
 
+test_create_does_not_write_jv_json() {
+    setup_tmp
+    cd "$TMP_ROOT"
+
+    printf '\n' | "$JV" create demo >"$TMP_ROOT/jv-test-create-no-json.out"
+
+    assert_not_exists "$TMP_ROOT/demo/jv.json"
+}
+
 main() {
     test_create_compile_run_packaged_project
+    test_create_does_not_write_jv_json
     echo "All tests passed"
 }
 

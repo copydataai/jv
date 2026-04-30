@@ -23,7 +23,9 @@ fi
 
 
 # Configuration
-JV_CONFIG="jv.json"
+JV_DIR=".jv"
+JV_STATE="$JV_DIR/state.json"
+JV_RUNS="$JV_DIR/runs.jsonl"
 SRC_DIR="src"
 BIN_DIR="bin"
 LIB_DIR="lib"
@@ -85,7 +87,7 @@ show_help() {
     echo -e "  src/          Source files (.java)"
     echo -e "  bin/          Compiled files (.class)"
     echo -e "  lib/          External JARs (auto-detected)"
-    echo -e "  jv.json       Project configuration"
+    echo -e "  .jv/          Generated JV memory after explain/run"
     echo -e ""
     echo -e "${BLUE}Learn more:${NC} https://github.com/copydataai/jv"
 }
@@ -101,36 +103,18 @@ init_project() {
     local project_name="${1:-my-project}"
     local package_name="${2:-}"
     
-    if [[ -f "$JV_CONFIG" ]]; then
-        warn "Project already initialized (jv.json exists)"
-        return 0
-    fi
-    
     info "Initializing Java project..."
     
     # Create directories
-    mkdir -p "$SRC_DIR" "$BIN_DIR" "$LIB_DIR"
-    
-    # Determine main class name
-    local main_class="Main"
-    if [[ -n "$package_name" ]]; then
-        main_class="${package_name}.Main"
+    if [[ -d "$SRC_DIR" && "$(ls -A "$SRC_DIR" 2>/dev/null)" ]]; then
+        warn "Source directory already contains files; leaving existing source untouched"
+    else
+        mkdir -p "$SRC_DIR"
     fi
-    
-    # Create jv.json config
-    cat > "$JV_CONFIG" << EOF
-{
-  "name": "$project_name",
-  "version": "1.0.0",
-  "mainClass": "$main_class",
-  "sourceDir": "src",
-  "outputDir": "bin",
-  "libDir": "lib"
-}
-EOF
+    mkdir -p "$BIN_DIR" "$LIB_DIR"
     
     # Create sample Main.java if src is empty
-    if [[ ! "$(ls -A $SRC_DIR 2>/dev/null)" ]]; then
+    if [[ ! "$(ls -A "$SRC_DIR" 2>/dev/null)" ]]; then
         if [[ -n "$package_name" ]]; then
             # Create package directory structure
             local package_path="${package_name//.//}"
@@ -285,9 +269,9 @@ run_java() {
     local args=("$@")
     
     if [[ -z "$class_name" ]]; then
-        # Try to read mainClass from jv.json
-        if [[ -f "$JV_CONFIG" ]]; then
-            class_name=$(jq -r '.mainClass // empty' "$JV_CONFIG" 2>/dev/null)
+        local legacy_config="jv.json"
+        if [[ -f "$legacy_config" ]]; then
+            class_name=$(jq -r '.mainClass // empty' "$legacy_config" 2>/dev/null)
             if [[ -z "$class_name" ]]; then
                 error "No class name provided and no mainClass found in jv.json. Usage: jv run <ClassName> [args...]"
             fi
