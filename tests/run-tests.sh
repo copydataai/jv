@@ -414,6 +414,43 @@ JAVA
     assert_not_exists "$TMP_ROOT/app/.jv/state.json"
 }
 
+test_remember_main_resolves_ambiguity() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    "$JV" remember main Tool
+    local output
+    output="$("$JV" run)"
+
+    assert_contains "$output" "Main class: Tool"
+    assert_contains "$output" "tool"
+
+    "$JV" forget main
+    set +e
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+    if [[ $status -eq 0 ]]; then
+        fail "Expected run to become ambiguous after forget"
+    fi
+    assert_contains "$output" "Multiple main classes found"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -431,6 +468,7 @@ main() {
     test_run_memory_write_failure_preserves_success_exit
     test_run_escapes_control_characters_in_memory_json
     test_run_failure_does_not_write_success_memory
+    test_remember_main_resolves_ambiguity
     echo "All tests passed"
 }
 

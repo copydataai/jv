@@ -76,11 +76,20 @@ write_state() {
     local main_class="$2"
     local build_command="$3"
     local run_command="$4"
+    local remembered
+
+    remembered="$(remembered_main_class)"
 
     ensure_jv_dir || return
-    cat > "$JV_STATE" <<EOF
+    {
+        cat <<EOF
 {
   "schemaVersion": 1,
+EOF
+        if [[ -n "$remembered" ]]; then
+            printf '  "rememberedMainClass": "%s",\n' "$(json_escape "$remembered")"
+        fi
+        cat <<EOF
   "projectShape": "$(json_escape "$shape")",
   "lastSuccessfulMainClass": "$(json_escape "$main_class")",
   "lastPlan": {
@@ -89,6 +98,7 @@ write_state() {
   }
 }
 EOF
+    } > "$JV_STATE"
 }
 
 append_run_event() {
@@ -97,6 +107,63 @@ append_run_event() {
 
     ensure_jv_dir || return
     printf '{"event":"%s","detail":"%s"}\n' "$(json_escape "$event")" "$(json_escape "$detail")" >> "$JV_RUNS"
+}
+
+remembered_main_class() {
+    [[ -f "$JV_STATE" ]] || return 0
+    sed -n 's/^[[:space:]]*"rememberedMainClass"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$JV_STATE" | head -n 1
+}
+
+state_has_run_memory() {
+    [[ -f "$JV_STATE" ]] || return 1
+    grep -Eq '"(projectShape|lastSuccessfulMainClass|lastPlan)"' "$JV_STATE"
+}
+
+remember_main() {
+    local main_class="$1"
+    local escaped_main
+    local tmp_state
+
+    [[ -n "$main_class" ]] || error "Usage: jv remember main <MainClass>"
+    escaped_main="$(json_escape "$main_class")"
+    ensure_jv_dir
+
+    if state_has_run_memory; then
+        tmp_state="$JV_STATE.tmp.$$"
+        awk -v remembered_line="  \"rememberedMainClass\": \"$escaped_main\"," '
+            /^[[:space:]]*"rememberedMainClass"[[:space:]]*:/ { next }
+            /^[[:space:]]*"schemaVersion"[[:space:]]*:/ {
+                print
+                print remembered_line
+                next
+            }
+            { print }
+        ' "$JV_STATE" > "$tmp_state"
+        mv "$tmp_state" "$JV_STATE"
+    else
+        cat > "$JV_STATE" <<EOF
+{
+  "schemaVersion": 1,
+  "rememberedMainClass": "$escaped_main"
+}
+EOF
+    fi
+
+    success "Remembered main class: $main_class"
+}
+
+forget_main() {
+    local tmp_state
+
+    if state_has_run_memory; then
+        tmp_state="$JV_STATE.tmp.$$"
+        sed '/^[[:space:]]*"rememberedMainClass"[[:space:]]*:/d' "$JV_STATE" > "$tmp_state"
+        mv "$tmp_state" "$JV_STATE"
+    elif [[ -f "$JV_STATE" ]]; then
+        rm -f "$JV_STATE"
+    fi
+
+    success "Forgot remembered main class"
 }
 
 # Check if Java is installed
@@ -122,6 +189,8 @@ show_help() {
     echo -e "  ${GREEN}explain${NC} [ClassName]           Show detected build/run plan without compiling"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} <ClassName> [args...]     Run compiled Java program"
+    echo -e "  ${GREEN}remember${NC} main <MainClass>      Remember main class for ambiguous projects"
+    echo -e "  ${GREEN}forget${NC} main                    Forget remembered main class"
     echo -e "  ${GREEN}clean${NC}                         Remove all compiled .class files"
     echo -e "  ${GREEN}help${NC}                          Show this help message"
     echo -e "  ${GREEN}version${NC}                       Show jv and Java version"
@@ -398,6 +467,13 @@ select_main_class() {
         return 0
     fi
 
+    local remembered
+    remembered="$(remembered_main_class)"
+    if [[ -n "$remembered" ]]; then
+        echo "$remembered"
+        return 0
+    fi
+
     local mains=()
     while IFS= read -r main_class; do
         [[ -n "$main_class" ]] && mains+=("$main_class")
@@ -611,6 +687,19 @@ main() {
             ;;
         run)
             run_java "$@"
+            ;;
+        remember)
+            if [[ "${1:-}" != "main" ]]; then
+                error "Usage: jv remember main <MainClass>"
+            fi
+            shift
+            remember_main "${1:-}"
+            ;;
+        forget)
+            if [[ "${1:-}" != "main" ]]; then
+                error "Usage: jv forget main"
+            fi
+            forget_main
             ;;
         clean)
             clean_project
