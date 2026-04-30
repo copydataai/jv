@@ -45,7 +45,7 @@ test_create_compile_run_packaged_project() {
     setup_tmp
     cd "$TMP_ROOT"
 
-    "$JV" create demo com.example >/tmp/jv-test-create.out
+    "$JV" create demo com.example >"$TMP_ROOT/jv-test-create.out"
     cd demo
 
     local output
