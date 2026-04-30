@@ -551,7 +551,7 @@ print_maven_plan() {
     echo "Source roots: $source_root"
     echo "Main class: $class_name"
     echo "Build path: mvn compile"
-    echo "Run path: mvn exec:java -Dexec.mainClass=$class_name"
+    echo "Run path: mvn -q exec:java -Dexec.mainClass=$class_name"
 }
 
 explain_project() {
@@ -629,11 +629,43 @@ run_java() {
         error "No Java project detected. Checked for pom.xml and $SRC_DIR/."
     fi
 
-    if [[ "$shape" != "plain-java" ]]; then
-        error "jv run currently supports plain Java projects only"
+    class_name="$(select_main_class "$class_name" "$source_root")"
+
+    if [[ "$shape" == "maven" ]]; then
+        if ! command -v mvn >/dev/null 2>&1; then
+            error "Maven project detected from pom.xml, but mvn is not installed."
+        fi
+
+        print_maven_plan "$source_root" "$class_name"
+        echo ""
+
+        set +e
+        mvn compile
+        local maven_status=$?
+        set -e
+        if [[ $maven_status -ne 0 ]]; then
+            return "$maven_status"
+        fi
+
+        set +e
+        mvn -q exec:java -Dexec.mainClass="$class_name"
+        maven_status=$?
+        set -e
+        if [[ $maven_status -ne 0 ]]; then
+            return "$maven_status"
+        fi
+
+        local build_command="mvn compile"
+        local run_command="mvn -q exec:java -Dexec.mainClass=$class_name"
+        if ! write_state "$shape" "$class_name" "$build_command" "$run_command" || ! append_run_event "executed" "$run_command"; then
+            warn "Could not write JV memory to $JV_DIR/"
+        fi
+        return 0
     fi
 
-    class_name="$(select_main_class "$class_name" "$source_root")"
+    if [[ "$shape" != "plain-java" ]]; then
+        error "jv run currently supports plain Java and Maven projects only"
+    fi
     
     check_java
     

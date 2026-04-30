@@ -563,6 +563,51 @@ test_forget_main_rejects_extra_args() {
     assert_contains "$output" "Usage: jv forget main"
 }
 
+test_maven_explain_and_run() {
+    if ! command -v mvn >/dev/null 2>&1; then
+        echo "Skipping Maven test; mvn not installed"
+        return 0
+    fi
+
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/main/java/com/example"
+    cd "$TMP_ROOT/app"
+    cat > pom.xml <<'XML'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+  </properties>
+</project>
+XML
+    cat > src/main/java/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println("maven app");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" explain)"
+    assert_contains "$output" "JV detected: Maven project"
+    assert_contains "$output" "Source roots: src/main/java"
+    assert_contains "$output" "Main class: com.example.App"
+    assert_contains "$output" "Build path: mvn compile"
+
+    output="$("$JV" run)"
+    assert_contains "$output" "JV detected: Maven project"
+    assert_contains "$output" "maven app"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -585,6 +630,7 @@ main() {
     test_remember_main_rejects_extra_args
     test_remember_main_rejects_invalid_class_names
     test_forget_main_rejects_extra_args
+    test_maven_explain_and_run
     echo "All tests passed"
 }
 
