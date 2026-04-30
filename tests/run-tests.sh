@@ -451,6 +451,40 @@ JAVA
     assert_contains "$output" "Multiple main classes found"
 }
 
+test_remember_main_rejects_extra_args() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    set +e
+    local output
+    output="$("$JV" remember main Tool Extra 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected remember main with extra args to fail"
+    fi
+    assert_contains "$output" "Usage: jv remember main <MainClass>"
+}
+
+test_forget_main_rejects_extra_args() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    set +e
+    local output
+    output="$("$JV" forget main Extra 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected forget main with extra args to fail"
+    fi
+    assert_contains "$output" "Usage: jv forget main"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -469,6 +503,8 @@ main() {
     test_run_escapes_control_characters_in_memory_json
     test_run_failure_does_not_write_success_memory
     test_remember_main_resolves_ambiguity
+    test_remember_main_rejects_extra_args
+    test_forget_main_rejects_extra_args
     echo "All tests passed"
 }
 

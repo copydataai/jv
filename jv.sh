@@ -689,14 +689,13 @@ main() {
             run_java "$@"
             ;;
         remember)
-            if [[ "${1:-}" != "main" ]]; then
+            if [[ $# -ne 2 || "${1:-}" != "main" ]]; then
                 error "Usage: jv remember main <MainClass>"
             fi
-            shift
-            remember_main "${1:-}"
+            remember_main "$2"
             ;;
         forget)
-            if [[ "${1:-}" != "main" ]]; then
+            if [[ $# -ne 1 || "${1:-}" != "main" ]]; then
                 error "Usage: jv forget main"
             fi
             forget_main
