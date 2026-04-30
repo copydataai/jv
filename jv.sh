@@ -274,7 +274,38 @@ find_main_classes() {
     [[ -d "$source_root" ]] || return 0
 
     while IFS= read -r -d '' file; do
-        if grep -Ev '^[[:space:]]*(//|/\*|\*|\*/)' "$file" | grep -Eq "$main_signature_regex"; then
+        if awk '
+            {
+                line = $0
+                visible = ""
+                while (length(line) > 0) {
+                    if (in_block_comment) {
+                        end = index(line, "*/")
+                        if (end == 0) {
+                            line = ""
+                        } else {
+                            line = substr(line, end + 2)
+                            in_block_comment = 0
+                        }
+                    } else {
+                        line_comment = index(line, "//")
+                        block_comment = index(line, "/*")
+                        if (line_comment > 0 && (block_comment == 0 || line_comment < block_comment)) {
+                            visible = visible substr(line, 1, line_comment - 1)
+                            line = ""
+                        } else if (block_comment > 0) {
+                            visible = visible substr(line, 1, block_comment - 1)
+                            line = substr(line, block_comment + 2)
+                            in_block_comment = 1
+                        } else {
+                            visible = visible line
+                            line = ""
+                        }
+                    }
+                }
+                print visible
+            }
+        ' "$file" | grep -Eq "$main_signature_regex"; then
             class_name_for_file "$file"
         fi
     done < <(find "$source_root" -name "*.java" -print0 2>/dev/null | sort -z)

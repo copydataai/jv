@@ -157,6 +157,38 @@ JAVA
     assert_contains "$output" "real main"
 }
 
+test_run_ignores_block_commented_plain_main_signatures() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/com/example"
+    cd "$TMP_ROOT/app"
+    cat > src/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println("real block main");
+    }
+}
+JAVA
+    cat > src/com/example/Notes.java <<'JAVA'
+package com.example;
+
+public class Notes {
+    /*
+    public static void main(String[] args) {
+        System.out.println("not real");
+    }
+    */
+}
+JAVA
+
+    local output
+    output="$("$JV" run)"
+
+    assert_contains "$output" "Main class: com.example.App"
+    assert_contains "$output" "real block main"
+}
+
 test_run_infers_main_with_spaced_array_signature() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src/com/example"
@@ -205,6 +237,7 @@ main() {
     test_run_infers_single_plain_main_class
     test_run_refuses_multiple_plain_main_classes
     test_run_ignores_commented_plain_main_signatures
+    test_run_ignores_block_commented_plain_main_signatures
     test_run_infers_main_with_spaced_array_signature
     test_run_infers_main_with_name_array_signature
     echo "All tests passed"
