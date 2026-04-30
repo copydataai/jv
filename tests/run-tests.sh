@@ -22,6 +22,17 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    local haystack="$1"
+    local needle="$2"
+    if [[ "$haystack" == *"$needle"* ]]; then
+        echo "Expected output not to contain: $needle" >&2
+        echo "Actual output:" >&2
+        echo "$haystack" >&2
+        exit 1
+    fi
+}
+
 assert_not_exists() {
     local path="$1"
     if [[ -e "$path" ]]; then
@@ -451,6 +462,44 @@ JAVA
     assert_contains "$output" "Multiple main classes found"
 }
 
+test_remember_main_rejects_stale_source_memory() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    "$JV" remember main Tool
+    "$JV" run >"$TMP_ROOT/jv-test-remember-stale-first-run.out"
+    rm src/Tool.java
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected stale remembered main to fail"
+    fi
+    assert_contains "$output" ".jv/state.json"
+    assert_contains "$output" "stale"
+    assert_contains "$output" "App"
+    assert_not_contains "$output" "tool"
+}
+
 test_remember_main_rejects_extra_args() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app"
@@ -466,6 +515,35 @@ test_remember_main_rejects_extra_args() {
         fail "Expected remember main with extra args to fail"
     fi
     assert_contains "$output" "Usage: jv remember main <MainClass>"
+}
+
+test_remember_main_rejects_invalid_class_names() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    "$JV" remember main App
+
+    local invalid
+    for invalid in 'Bad\Name' 'Bad Name'; do
+        set +e
+        local output
+        output="$("$JV" remember main "$invalid" 2>&1)"
+        local status=$?
+        set -e
+
+        if [[ $status -eq 0 ]]; then
+            fail "Expected invalid remembered main class to fail: $invalid"
+        fi
+        assert_contains "$output" "Invalid main class"
+    done
+
+    [[ -f "$TMP_ROOT/app/.jv/state.json" ]] || fail "Expected valid state to remain"
+    if command -v jq >/dev/null 2>&1; then
+        jq -e . "$TMP_ROOT/app/.jv/state.json" >/dev/null
+    fi
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"rememberedMainClass": "App"'
+    assert_not_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" 'Bad'
 }
 
 test_forget_main_rejects_extra_args() {
@@ -503,7 +581,9 @@ main() {
     test_run_escapes_control_characters_in_memory_json
     test_run_failure_does_not_write_success_memory
     test_remember_main_resolves_ambiguity
+    test_remember_main_rejects_stale_source_memory
     test_remember_main_rejects_extra_args
+    test_remember_main_rejects_invalid_class_names
     test_forget_main_rejects_extra_args
     echo "All tests passed"
 }

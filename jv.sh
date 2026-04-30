@@ -67,6 +67,11 @@ json_escape() {
     done < <(printf '%s' "$1" | LC_ALL=C od -An -tx1 -v)
 }
 
+valid_main_class_name() {
+    local main_class="$1"
+    [[ "$main_class" =~ ^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$ ]]
+}
+
 ensure_jv_dir() {
     mkdir -p "$JV_DIR"
 }
@@ -86,7 +91,7 @@ write_state() {
 {
   "schemaVersion": 1,
 EOF
-        if [[ -n "$remembered" ]]; then
+        if [[ -n "$remembered" ]] && valid_main_class_name "$remembered"; then
             printf '  "rememberedMainClass": "%s",\n' "$(json_escape "$remembered")"
         fi
         cat <<EOF
@@ -125,6 +130,9 @@ remember_main() {
     local tmp_state
 
     [[ -n "$main_class" ]] || error "Usage: jv remember main <MainClass>"
+    if ! valid_main_class_name "$main_class"; then
+        error "Invalid main class: $main_class\nUsage: jv remember main <MainClass>"
+    fi
     escaped_main="$(json_escape "$main_class")"
     ensure_jv_dir
 
@@ -467,17 +475,37 @@ select_main_class() {
         return 0
     fi
 
-    local remembered
-    remembered="$(remembered_main_class)"
-    if [[ -n "$remembered" ]]; then
-        echo "$remembered"
-        return 0
-    fi
-
     local mains=()
+    local main_class
     while IFS= read -r main_class; do
         [[ -n "$main_class" ]] && mains+=("$main_class")
     done < <(find_main_classes "$source_root")
+
+    local remembered
+    remembered="$(remembered_main_class)"
+    if [[ -n "$remembered" ]]; then
+        if ! valid_main_class_name "$remembered"; then
+            error "Invalid remembered main class in $JV_STATE: $remembered"
+        fi
+
+        for main_class in "${mains[@]}"; do
+            if [[ "$main_class" == "$remembered" ]]; then
+                echo "$remembered"
+                return 0
+            fi
+        done
+
+        echo "Remembered main class in $JV_STATE is stale: $remembered" >&2
+        if [[ ${#mains[@]} -gt 0 ]]; then
+            echo "Detected main classes:" >&2
+            for main_class in "${mains[@]}"; do
+                echo "  $main_class" >&2
+            done
+        else
+            echo "No main classes detected in $source_root" >&2
+        fi
+        error "Forget or update remembered main class: jv forget main"
+    fi
 
     if [[ ${#mains[@]} -eq 1 ]]; then
         echo "${mains[0]}"
