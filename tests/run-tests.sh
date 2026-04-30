@@ -592,6 +592,10 @@ package com.example;
 public class App {
     public static void main(String[] args) {
         System.out.println("maven app");
+        System.out.println("args count: " + args.length);
+        for (String arg : args) {
+            System.out.println("arg: " + arg);
+        }
     }
 }
 JAVA
@@ -606,6 +610,13 @@ JAVA
     output="$("$JV" run)"
     assert_contains "$output" "JV detected: Maven project"
     assert_contains "$output" "maven app"
+
+    output="$("$JV" run com.example.App one two)"
+    assert_contains "$output" "JV detected: Maven project"
+    assert_contains "$output" "Run path: mvn -q exec:java -Dexec.mainClass=com.example.App -Dexec.args=\"one two\""
+    assert_contains "$output" "args count: 2"
+    assert_contains "$output" "arg: one"
+    assert_contains "$output" "arg: two"
 }
 
 main() {

@@ -546,12 +546,32 @@ print_plain_java_plan() {
 print_maven_plan() {
     local source_root="$1"
     local class_name="$2"
+    local maven_args="${3:-}"
+    local run_path="mvn -q exec:java -Dexec.mainClass=$class_name"
+
+    if [[ -n "$maven_args" ]]; then
+        run_path="$run_path -Dexec.args=\"$maven_args\""
+    fi
 
     echo "JV detected: Maven project"
     echo "Source roots: $source_root"
     echo "Main class: $class_name"
     echo "Build path: mvn compile"
-    echo "Run path: mvn -q exec:java -Dexec.mainClass=$class_name"
+    echo "Run path: $run_path"
+}
+
+join_maven_args() {
+    local joined=""
+    local arg
+
+    for arg in "$@"; do
+        if [[ -n "$joined" ]]; then
+            joined="$joined "
+        fi
+        joined="$joined$arg"
+    done
+
+    printf '%s' "$joined"
 }
 
 explain_project() {
@@ -636,7 +656,14 @@ run_java() {
             error "Maven project detected from pom.xml, but mvn is not installed."
         fi
 
-        print_maven_plan "$source_root" "$class_name"
+        local maven_args
+        local run_command="mvn -q exec:java -Dexec.mainClass=$class_name"
+        maven_args="$(join_maven_args "${args[@]}")"
+        if [[ -n "$maven_args" ]]; then
+            run_command="$run_command -Dexec.args=\"$maven_args\""
+        fi
+
+        print_maven_plan "$source_root" "$class_name" "$maven_args"
         echo ""
 
         set +e
@@ -648,7 +675,11 @@ run_java() {
         fi
 
         set +e
-        mvn -q exec:java -Dexec.mainClass="$class_name"
+        if [[ -n "$maven_args" ]]; then
+            mvn -q exec:java -Dexec.mainClass="$class_name" -Dexec.args="$maven_args"
+        else
+            mvn -q exec:java -Dexec.mainClass="$class_name"
+        fi
         maven_status=$?
         set -e
         if [[ $maven_status -ne 0 ]]; then
@@ -656,7 +687,6 @@ run_java() {
         fi
 
         local build_command="mvn compile"
-        local run_command="mvn -q exec:java -Dexec.mainClass=$class_name"
         if ! write_state "$shape" "$class_name" "$build_command" "$run_command" || ! append_run_event "executed" "$run_command"; then
             warn "Could not write JV memory to $JV_DIR/"
         fi
