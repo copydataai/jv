@@ -48,7 +48,7 @@ export default function Home() {
             height={200}
             className="mx-auto"
           />
-          
+
           <p className="text-xl sm:text-2xl text-[var(--text-secondary)]">
             The simple Java build tool for students and early releases
           </p>
@@ -56,7 +56,9 @@ export default function Home() {
           <div className="grid sm:grid-cols-2 gap-6 mt-12 text-left">
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">⚡</div>
-              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">Fast Setup</h3>
+              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
+                Fast Setup
+              </h3>
               <p className="text-[var(--text-secondary)] text-sm">
                 Get started in under 1 minute. No complex configuration needed.
               </p>
@@ -64,7 +66,9 @@ export default function Home() {
 
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">🎯</div>
-              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">Zero Config</h3>
+              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
+                Zero Config
+              </h3>
               <p className="text-[var(--text-secondary)] text-sm">
                 Convention over configuration. Just write code and run.
               </p>
@@ -72,7 +76,9 @@ export default function Home() {
 
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">📦</div>
-              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">Simple Dependencies</h3>
+              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
+                Simple Dependencies
+              </h3>
               <p className="text-[var(--text-secondary)] text-sm">
                 Drop JAR files in the lib/ folder. No XML or DSL required.
               </p>
@@ -80,7 +86,9 @@ export default function Home() {
 
             <div className="p-6 rounded-lg border border-[var(--border)] bg-[var(--card-bg)]">
               <div className="text-3xl mb-3">🧑‍🎓</div>
-              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">Student Friendly</h3>
+              <h3 className="font-semibold text-lg mb-2 text-[var(--foreground)]">
+                Student Friendly
+              </h3>
               <p className="text-[var(--text-secondary)] text-sm">
                 Perfect for university assignments and learning Java.
               </p>
@@ -90,7 +98,9 @@ export default function Home() {
           <div className="pt-8">
             <div className="inline-block p-4 rounded-lg bg-[var(--code-bg)] border border-[var(--text-secondary)]">
               <code className="text-sm font-mono text-[var(--code-text)]">
-                curl -fsSL https://raw.githubusercontent.com/copydataai/jv/main/install.sh | bash
+                curl -fsSL
+                https://raw.githubusercontent.com/copydataai/jv/main/install.sh
+                | bash
               </code>
             </div>
           </div>

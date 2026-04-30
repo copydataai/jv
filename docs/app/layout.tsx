@@ -14,8 +14,17 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "JV - Simple Java Build Tool for Students",
-  description: "JV is a lightweight Java build tool designed for university assignments and simple projects. An alternative to Maven, Gradle, and Ant with zero configuration and fast setup.",
-  keywords: ["java", "build tool", "maven alternative", "gradle alternative", "student projects", "java compiler", "cli tool"],
+  description:
+    "JV is a lightweight Java build tool designed for university assignments and simple projects. An alternative to Maven, Gradle, and Ant with zero configuration and fast setup.",
+  keywords: [
+    "java",
+    "build tool",
+    "maven alternative",
+    "gradle alternative",
+    "student projects",
+    "java compiler",
+    "cli tool",
+  ],
   authors: [{ name: "Jose Sanchez" }],
   creator: "Jose Sanchez",
 };
