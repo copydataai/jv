@@ -98,7 +98,7 @@ json_array_from_lines() {
     printf '['
     for item in "$@"; do
         if [[ $first -eq 0 ]]; then
-            printf ', '
+            printf ','
         fi
         printf '"%s"' "$(json_escape "$item")"
         first=0
@@ -287,6 +287,15 @@ emit_execution_result_event() {
     append_event_json "execution_result" "$phase $status with exit code $exit_code" "$payload"
 }
 
+emit_memory_write_event() {
+    local target="$1"
+    local status="$2"
+    local classification="$3"
+    local payload
+    payload="{\"target\":\"$(json_escape "$target")\",\"status\":\"$(json_escape "$status")\",\"classification\":\"$(json_escape "$classification")\",\"rememberedMainClass\":\"$(json_escape "$PLAN_REMEMBERED_MAIN")\",\"lastSuccessfulMainClass\":\"$(json_escape "$PLAN_SELECTED_MAIN")\",\"lastPlan\":{\"build\":\"$(json_escape "$PLAN_BUILD_DISPLAY")\",\"run\":\"$(json_escape "$PLAN_RUN_DISPLAY")\"}}"
+    append_event_json "memory_write" "Memory write $status for $target" "$payload"
+}
+
 write_state() {
     local shape="$1"
     local main_class="$2"
@@ -334,10 +343,16 @@ append_run_event() {
 
 write_success_memory_from_plan() {
     if [[ -z "$PLAN_SELECTED_MAIN" || -z "$PLAN_BUILD_DISPLAY" || -z "$PLAN_RUN_DISPLAY" ]]; then
+        emit_memory_write_event "$JV_STATE" "skipped" "missing-plan" || true
         return 1
     fi
-    write_state "$PLAN_SHAPE" "$PLAN_SELECTED_MAIN" "$PLAN_BUILD_DISPLAY" "$PLAN_RUN_DISPLAY" || return 1
-    append_run_event "executed" "$PLAN_RUN_DISPLAY" || return 1
+    if ! write_state "$PLAN_SHAPE" "$PLAN_SELECTED_MAIN" "$PLAN_BUILD_DISPLAY" "$PLAN_RUN_DISPLAY"; then
+        emit_memory_write_event "$JV_STATE" "failure" "memory-unavailable" || true
+        return 1
+    fi
+    if ! emit_memory_write_event "$JV_STATE" "success" "completed"; then
+        return 1
+    fi
 }
 
 remembered_main_class() {
@@ -393,6 +408,9 @@ remember_main() {
 EOF
     fi
 
+    PLAN_REMEMBERED_MAIN="$main_class"
+    PLAN_SELECTED_MAIN="$main_class"
+    emit_memory_write_event "$JV_STATE" "success" "remember-main" || warn "Could not write JV events to $JV_RUNS"
     success "Remembered main class: $main_class"
 }
 
@@ -407,6 +425,9 @@ forget_main() {
         rm -f "$JV_STATE"
     fi
 
+    PLAN_REMEMBERED_MAIN=""
+    PLAN_SELECTED_MAIN=""
+    emit_memory_write_event "$JV_STATE" "success" "forget-main" || warn "Could not write JV events to $JV_RUNS"
     success "Forgot remembered main class"
 }
 

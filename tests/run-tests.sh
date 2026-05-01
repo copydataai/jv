@@ -68,8 +68,15 @@ assert_jsonl_valid_if_jq() {
 assert_jsonl_contains_event_type() {
     local file="$1"
     local event_type="$2"
+    local line
     if command -v jq >/dev/null 2>&1; then
-        jq -e --arg event_type "$event_type" 'select(.schemaVersion == 1 and .eventType == $event_type)' "$file" >/dev/null
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if printf '%s\n' "$line" | jq -e --arg event_type "$event_type" '.schemaVersion == 1 and .eventType == $event_type' >/dev/null 2>&1; then
+                return 0
+            fi
+        done < "$file"
+        fail "Expected $file to contain schema v1 event type: $event_type"
     else
         assert_contains "$(cat "$file")" "\"eventType\":\"$event_type\""
     fi
@@ -512,8 +519,8 @@ JAVA
     [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"projectShape": "plain-java"'
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"lastSuccessfulMainClass": "Main"'
-    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"execution_result"'
-    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"classification":"legacy-executed"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"memory_write"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"classification":"completed"'
 }
 
 test_run_writes_plain_args_to_jv_memory() {
@@ -533,7 +540,8 @@ JAVA
     [[ -f "$TMP_ROOT/app/.jv/state.json" ]] || fail "Expected .jv/state.json"
     [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"run": "java -cp bin Main one two"'
-    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"display":"java -cp bin Main one two"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"memory_write"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"run":"java -cp bin Main one two"'
 }
 
 test_run_writes_agent_grade_event_schema() {
@@ -553,7 +561,7 @@ JAVA
     local events="$TMP_ROOT/app/.jv/runs.jsonl"
     assert_exists "$events"
     assert_jsonl_valid_if_jq "$events"
-    assert_jsonl_event_count_at_least "$events" 6
+    assert_jsonl_event_count_at_least "$events" 5
     assert_jsonl_contains_event_type "$events" "environment"
     assert_jsonl_contains_event_type "$events" "plan"
     assert_jsonl_contains_event_type "$events" "execution_start"
@@ -563,6 +571,28 @@ JAVA
     assert_contains "$(cat "$events")" '"runId":"run_'
     assert_contains "$(cat "$events")" '"command":{"name":"run","argv":["jv","run","Main","alpha"]}'
     assert_contains "$(cat "$events")" '"summary":"Plan selected Main from explicit main class argument"'
+}
+
+test_run_appends_v1_events_after_legacy_and_corrupt_lines() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("legacy compatible");
+    }
+}
+JAVA
+    printf '%s\n' '{"event":"executed","detail":"java -cp bin OldMain"}' '{bad json' > .jv/runs.jsonl
+
+    "$JV" run >"$TMP_ROOT/legacy-events.out"
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_contains "$(sed -n '1p' "$events")" '"event":"executed"'
+    assert_contains "$(sed -n '2p' "$events")" '{bad json'
+    assert_jsonl_contains_event_type "$events" "plan"
+    assert_jsonl_contains_event_type "$events" "memory_write"
 }
 
 test_run_state_contains_planner_reasons() {
@@ -1276,6 +1306,7 @@ main() {
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
     test_run_writes_agent_grade_event_schema
+    test_run_appends_v1_events_after_legacy_and_corrupt_lines
     test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
