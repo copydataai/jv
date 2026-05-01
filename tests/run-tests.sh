@@ -55,6 +55,36 @@ assert_status() {
     fi
 }
 
+assert_jsonl_valid_if_jq() {
+    local file="$1"
+    if command -v jq >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            printf '%s\n' "$line" | jq -e . >/dev/null
+        done < "$file"
+    fi
+}
+
+assert_jsonl_contains_event_type() {
+    local file="$1"
+    local event_type="$2"
+    if command -v jq >/dev/null 2>&1; then
+        jq -e --arg event_type "$event_type" 'select(.schemaVersion == 1 and .eventType == $event_type)' "$file" >/dev/null
+    else
+        assert_contains "$(cat "$file")" "\"eventType\":\"$event_type\""
+    fi
+}
+
+assert_jsonl_event_count_at_least() {
+    local file="$1"
+    local minimum="$2"
+    local count
+    count="$(wc -l < "$file" | xargs)"
+    if [[ "$count" -lt "$minimum" ]]; then
+        fail "Expected at least $minimum JSONL events in $file, got $count"
+    fi
+}
+
 setup_tmp() {
     cleanup_tmp
     TMP_ROOT="$(mktemp -d)"
@@ -465,6 +495,35 @@ JAVA
     [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"run": "java -cp bin Main one two"'
     assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"detail":"java -cp bin Main one two"'
+}
+
+test_run_writes_agent_grade_event_schema() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("agent events");
+    }
+}
+JAVA
+
+    "$JV" run Main alpha >"$TMP_ROOT/events-run.out"
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_event_count_at_least "$events" 6
+    assert_jsonl_contains_event_type "$events" "environment"
+    assert_jsonl_contains_event_type "$events" "plan"
+    assert_jsonl_contains_event_type "$events" "execution_start"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_jsonl_contains_event_type "$events" "memory_write"
+    assert_contains "$(cat "$events")" '"schemaVersion":1'
+    assert_contains "$(cat "$events")" '"runId":"run_'
+    assert_contains "$(cat "$events")" '"command":{"name":"run","argv":["jv","run","Main","alpha"]}'
+    assert_contains "$(cat "$events")" '"summary":"Plan selected Main from explicit main class argument"'
 }
 
 test_run_state_contains_planner_reasons() {
@@ -1147,6 +1206,7 @@ main() {
     test_run_and_explain_share_plain_plan_output
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
+    test_run_writes_agent_grade_event_schema
     test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
