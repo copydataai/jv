@@ -40,6 +40,21 @@ assert_not_exists() {
     fi
 }
 
+assert_exists() {
+    local path="$1"
+    if [[ ! -e "$path" ]]; then
+        fail "Expected path to exist: $path"
+    fi
+}
+
+assert_status() {
+    local actual="$1"
+    local expected="$2"
+    if [[ "$actual" -ne "$expected" ]]; then
+        fail "Expected status $expected, got $actual"
+    fi
+}
+
 setup_tmp() {
     cleanup_tmp
     TMP_ROOT="$(mktemp -d)"
