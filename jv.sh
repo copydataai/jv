@@ -50,6 +50,10 @@ PLAN_MEMORY_STATE=""
 PLAN_LAST_SUCCESSFUL_MAIN=""
 PLAN_LAST_RUN_SUMMARY=""
 PLAN_RUN_ARGS=()
+EVENT_RUN_ID=""
+EVENT_SEQUENCE=0
+EVENT_COMMAND_NAME=""
+EVENT_COMMAND_ARGV=()
 
 # Helper functions
 error() {
@@ -102,6 +106,20 @@ json_array_from_lines() {
     printf ']'
 }
 
+json_bool() {
+    if [[ "${1:-}" == "true" ]]; then
+        printf 'true'
+    else
+        printf 'false'
+    fi
+}
+
+json_string_field() {
+    local name="$1"
+    local value="$2"
+    printf '"%s":"%s"' "$name" "$(json_escape "$value")"
+}
+
 valid_main_class_name() {
     local main_class="$1"
     [[ "$main_class" =~ ^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$ ]]
@@ -147,6 +165,44 @@ ensure_jv_dir() {
     mkdir -p "$JV_DIR"
 }
 
+event_timestamp() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+event_init() {
+    local command_name="$1"
+    shift || true
+    EVENT_COMMAND_NAME="$command_name"
+    EVENT_COMMAND_ARGV=("jv" "$command_name" "$@")
+    EVENT_RUN_ID="run_$(date -u +"%Y%m%dT%H%M%SZ")_$$"
+    EVENT_SEQUENCE=0
+}
+
+event_command_json() {
+    printf '{"name":"%s","argv":%s}' \
+        "$(json_escape "$EVENT_COMMAND_NAME")" \
+        "$(json_array_from_lines "${EVENT_COMMAND_ARGV[@]}")"
+}
+
+append_event_json() {
+    local event_type="$1"
+    local summary="$2"
+    local payload="$3"
+
+    [[ -n "$EVENT_RUN_ID" ]] || event_init "unknown"
+    EVENT_SEQUENCE=$((EVENT_SEQUENCE + 1))
+    ensure_jv_dir || return 1
+    printf '{"schemaVersion":1,"eventType":"%s","runId":"%s","sequence":%d,"timestamp":"%s","cwd":"%s","command":%s,"summary":"%s","payload":%s}\n' \
+        "$(json_escape "$event_type")" \
+        "$(json_escape "$EVENT_RUN_ID")" \
+        "$EVENT_SEQUENCE" \
+        "$(event_timestamp)" \
+        "$(json_escape "$PWD")" \
+        "$(event_command_json)" \
+        "$(json_escape "$summary")" \
+        "$payload" >> "$JV_RUNS"
+}
+
 write_state() {
     local shape="$1"
     local main_class="$2"
@@ -189,8 +245,7 @@ append_run_event() {
     local event="$1"
     local detail="$2"
 
-    ensure_jv_dir || return
-    printf '{"event":"%s","detail":"%s"}\n' "$(json_escape "$event")" "$(json_escape "$detail")" >> "$JV_RUNS"
+    append_event_json "execution_result" "$detail" "{\"phase\":\"run\",\"status\":\"success\",\"exitCode\":0,\"classification\":\"legacy-$event\",\"step\":{\"kind\":\"legacy\",\"display\":\"$(json_escape "$detail")\"}}"
 }
 
 write_success_memory_from_plan() {
@@ -1148,6 +1203,7 @@ clean_project() {
 main() {
     local command="${1:-help}"
     shift || true
+    event_init "$command" "$@"
     
     case "$command" in
         create)

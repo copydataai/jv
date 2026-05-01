@@ -474,7 +474,8 @@ JAVA
     [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"projectShape": "plain-java"'
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"lastSuccessfulMainClass": "Main"'
-    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"event":"executed"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"execution_result"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"classification":"legacy-executed"'
 }
 
 test_run_writes_plain_args_to_jv_memory() {
@@ -494,7 +495,7 @@ JAVA
     [[ -f "$TMP_ROOT/app/.jv/state.json" ]] || fail "Expected .jv/state.json"
     [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"run": "java -cp bin Main one two"'
-    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"detail":"java -cp bin Main one two"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"display":"java -cp bin Main one two"'
 }
 
 test_run_writes_agent_grade_event_schema() {
