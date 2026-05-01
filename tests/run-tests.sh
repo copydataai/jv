@@ -616,6 +616,68 @@ JAVA
     assert_not_contains "$output" "tool"
 }
 
+test_run_with_args_ignores_remembered_main_when_ambiguous() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app ran");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool ran");
+    }
+}
+JAVA
+
+    "$JV" remember main Tool
+
+    set +e
+    local output
+    output="$("$JV" run arg 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected ambiguous run with args to fail despite remembered main"
+    fi
+    assert_contains "$output" "Multiple main classes found"
+    assert_contains "$output" "App"
+    assert_contains "$output" "Tool"
+    assert_not_contains "$output" "tool ran"
+}
+
+test_run_with_args_infers_single_main_despite_stale_memory() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("main ran");
+        for (String arg : args) {
+            System.out.println("arg: " + arg);
+        }
+    }
+}
+JAVA
+
+    "$JV" remember main OldMain
+
+    local output
+    output="$("$JV" run arg)"
+
+    assert_contains "$output" "Main class: Main"
+    assert_contains "$output" "main ran"
+    assert_contains "$output" "arg: arg"
+    assert_not_contains "$output" "stale"
+}
+
 test_remember_main_rejects_extra_args() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app"
@@ -813,6 +875,48 @@ test_doctor_rejects_extra_args() {
     assert_contains "$output" "Usage: jv doctor"
 }
 
+test_doctor_reports_ambiguous_main_as_blocker() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" doctor)"
+
+    assert_contains "$output" "Blockers"
+    assert_contains "$output" "Multiple main classes found"
+    assert_contains "$output" "App"
+    assert_contains "$output" "Tool"
+}
+
+test_doctor_reports_unknown_project_as_blocker() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    output="$("$JV" doctor)"
+
+    assert_contains "$output" "Project"
+    assert_contains "$output" "Shape: unknown"
+    assert_contains "$output" "Blockers"
+    assert_contains "$output" "No Java project detected"
+}
+
 test_help_lists_diagnostics_commands() {
     local output
     output="$("$JV" help)"
@@ -896,7 +1000,7 @@ test_explain_reports_empty_src_as_blocker() {
     assert_contains "$output" "JV detected: plain Java project"
     assert_contains "$output" "Source roots: src"
     assert_contains "$output" "Reason: src directory found"
-    assert_contains "$output" "Blocker: No main class found in src. Add a public static void main(String[] args) method."
+    assert_contains "$output" "Blocker: No main class found in src. Pass one explicitly: jv run <MainClass>"
     assert_not_contains "$output" "Error:"
 }
 
@@ -926,6 +1030,8 @@ main() {
     test_run_failure_does_not_write_success_memory
     test_remember_main_resolves_ambiguity
     test_remember_main_rejects_stale_source_memory
+    test_run_with_args_ignores_remembered_main_when_ambiguous
+    test_run_with_args_infers_single_main_despite_stale_memory
     test_remember_main_rejects_extra_args
     test_remember_main_rejects_invalid_class_names
     test_forget_main_rejects_extra_args
@@ -933,6 +1039,8 @@ main() {
     test_doctor_reports_project_state
     test_doctor_reports_plan_reasons_memory_and_blockers
     test_doctor_rejects_extra_args
+    test_doctor_reports_ambiguous_main_as_blocker
+    test_doctor_reports_unknown_project_as_blocker
     test_help_lists_diagnostics_commands
     echo "All tests passed"
 }

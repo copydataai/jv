@@ -29,8 +29,6 @@ JV_RUNS="$JV_DIR/runs.jsonl"
 SRC_DIR="src"
 BIN_DIR="bin"
 LIB_DIR="lib"
-RESOLVED_MAIN_CLASS=""
-RESOLVED_ARGS=()
 PLAN_SHAPE=""
 PLAN_SHAPE_REASON=""
 PLAN_SOURCE_ROOT=""
@@ -538,109 +536,75 @@ find_main_classes() {
     done < <(find "$source_root" -name "*.java" -print0 2>/dev/null | sort -z)
 }
 
-print_ambiguous_main_classes() {
+plan_main_candidates_csv() {
+    local candidates=""
     local main_class
 
-    echo "Multiple main classes found:" >&2
-    for main_class in "$@"; do
-        echo "  $main_class" >&2
+    for main_class in "${PLAN_MAIN_CANDIDATES[@]}"; do
+        if [[ -n "$candidates" ]]; then
+            candidates="$candidates, "
+        fi
+        candidates="$candidates$main_class"
     done
+
+    printf '%s' "$candidates"
 }
 
-select_main_class() {
+plan_select_main_class() {
     local requested="$1"
     local source_root="$2"
+    local main_class
 
     if [[ -n "$requested" ]]; then
-        echo "$requested"
-        return 0
-    fi
-
-    local mains=()
-    local main_class
-    while IFS= read -r main_class; do
-        [[ -n "$main_class" ]] && mains+=("$main_class")
-    done < <(find_main_classes "$source_root")
-
-    local remembered
-    remembered="$(remembered_main_class)"
-    if [[ -n "$remembered" ]]; then
-        if ! valid_main_class_name "$remembered"; then
-            error "Invalid remembered main class in $JV_STATE: $remembered"
-        fi
-
-        for main_class in "${mains[@]}"; do
-            if [[ "$main_class" == "$remembered" ]]; then
-                echo "$remembered"
+        for main_class in "${PLAN_MAIN_CANDIDATES[@]}"; do
+            if [[ "$main_class" == "$requested" ]]; then
+                PLAN_SELECTED_MAIN="$requested"
+                PLAN_SELECTED_MAIN_SOURCE="explicit"
+                PLAN_SELECTED_MAIN_REASON="explicit main class argument"
+                plan_add_reason "$PLAN_SELECTED_MAIN_REASON"
                 return 0
             fi
         done
+        plan_add_blocker "Requested main class not found in source: $requested"
+        return 0
+    fi
 
-        echo "Remembered main class in $JV_STATE is stale: $remembered" >&2
-        if [[ ${#mains[@]} -gt 0 ]]; then
-            echo "Detected main classes:" >&2
-            for main_class in "${mains[@]}"; do
-                echo "  $main_class" >&2
-            done
+    if [[ -n "$PLAN_REMEMBERED_MAIN" ]]; then
+        for main_class in "${PLAN_MAIN_CANDIDATES[@]}"; do
+            if [[ "$main_class" == "$PLAN_REMEMBERED_MAIN" ]]; then
+                PLAN_SELECTED_MAIN="$PLAN_REMEMBERED_MAIN"
+                PLAN_SELECTED_MAIN_SOURCE="remembered"
+                PLAN_SELECTED_MAIN_REASON="remembered main still exists in source"
+                plan_add_reason "$PLAN_SELECTED_MAIN_REASON"
+                return 0
+            fi
+        done
+        local candidates
+        candidates="$(plan_main_candidates_csv)"
+        if [[ -n "$candidates" ]]; then
+            plan_add_blocker "Remembered main class in $JV_STATE is stale: $PLAN_REMEMBERED_MAIN. Detected main classes: $candidates"
         else
-            echo "No main classes detected in $source_root" >&2
+            plan_add_blocker "Remembered main class in $JV_STATE is stale: $PLAN_REMEMBERED_MAIN. No main classes detected in $source_root"
         fi
-        error "Forget or update remembered main class: jv forget main"
-    fi
-
-    if [[ ${#mains[@]} -eq 1 ]]; then
-        echo "${mains[0]}"
         return 0
     fi
 
-    if [[ ${#mains[@]} -eq 0 ]]; then
-        error "No main class found in $source_root. Pass one explicitly: jv run <MainClass>"
-    fi
-
-    print_ambiguous_main_classes "${mains[@]}"
-    error "Pass one explicitly: jv run <MainClass>"
-}
-
-resolve_main_invocation() {
-    local source_root="$1"
-    shift || true
-    local first_token="${1:-}"
-    local mains=()
-    local main_class
-
-    RESOLVED_MAIN_CLASS=""
-    RESOLVED_ARGS=()
-
-    if [[ $# -eq 0 ]]; then
-        RESOLVED_MAIN_CLASS="$(select_main_class "" "$source_root")"
-        return 0
-    fi
-    shift
-
-    while IFS= read -r main_class; do
-        [[ -n "$main_class" ]] && mains+=("$main_class")
-    done < <(find_main_classes "$source_root")
-
-    for main_class in "${mains[@]}"; do
-        if [[ "$first_token" == "$main_class" ]]; then
-            RESOLVED_MAIN_CLASS="$main_class"
-            RESOLVED_ARGS=("$@")
-            return 0
-        fi
-    done
-
-    if [[ ${#mains[@]} -eq 1 ]]; then
-        RESOLVED_MAIN_CLASS="${mains[0]}"
-        RESOLVED_ARGS=("$first_token" "$@")
-        return 0
-    fi
-
-    if [[ ${#mains[@]} -eq 0 ]]; then
-        error "No main class found in $source_root. Pass one explicitly: jv run <MainClass>"
-    fi
-
-    print_ambiguous_main_classes "${mains[@]}"
-    error "Pass one explicitly: jv run <MainClass>"
+    case "${#PLAN_MAIN_CANDIDATES[@]}" in
+        0)
+            plan_add_blocker "No main class found in $source_root. Pass one explicitly: jv run <MainClass>"
+            ;;
+        1)
+            PLAN_SELECTED_MAIN="${PLAN_MAIN_CANDIDATES[0]}"
+            PLAN_SELECTED_MAIN_SOURCE="only-candidate"
+            PLAN_SELECTED_MAIN_REASON="exactly one main class detected"
+            plan_add_reason "$PLAN_SELECTED_MAIN_REASON"
+            ;;
+        *)
+            local candidates
+            candidates="$(plan_main_candidates_csv)"
+            plan_add_blocker "Multiple main classes found: $candidates. Pass one explicitly: jv run <MainClass>"
+            ;;
+    esac
 }
 
 print_plain_java_plan() {
@@ -706,6 +670,9 @@ build_plan() {
     local class_name
     local run_args
     local main_class
+    local requested_main=""
+    local first_token
+    local remaining_args=()
 
     reset_plan
     PLAN_SHAPE="$(detect_project_shape)"
@@ -750,30 +717,49 @@ build_plan() {
         done < <(find_main_classes "$source_root")
     fi
 
-    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 0 ]]; then
-        plan_add_blocker "No main class found in $source_root. Add a public static void main(String[] args) method."
+    first_token="${1:-}"
+    if [[ "$#" -gt 0 ]]; then
+        shift
+        remaining_args=("$@")
+        for main_class in "${PLAN_MAIN_CANDIDATES[@]}"; do
+            if [[ "$first_token" == "$main_class" ]]; then
+                requested_main="$first_token"
+                PLAN_RUN_ARGS=("${remaining_args[@]}")
+                break
+            fi
+        done
+
+        if [[ -n "$requested_main" ]]; then
+            plan_select_main_class "$requested_main" "$source_root"
+        else
+            PLAN_RUN_ARGS=("$first_token" "${remaining_args[@]}")
+            case "${#PLAN_MAIN_CANDIDATES[@]}" in
+                0)
+                    plan_add_blocker "No main class found in $source_root. Pass one explicitly: jv run <MainClass>"
+                    ;;
+                1)
+                    PLAN_SELECTED_MAIN="${PLAN_MAIN_CANDIDATES[0]}"
+                    PLAN_SELECTED_MAIN_SOURCE="only-candidate"
+                    PLAN_SELECTED_MAIN_REASON="exactly one main class detected"
+                    plan_add_reason "$PLAN_SELECTED_MAIN_REASON"
+                    ;;
+                *)
+                    local candidates
+                    candidates="$(plan_main_candidates_csv)"
+                    plan_add_blocker "Multiple main classes found: $candidates. Pass one explicitly: jv run <MainClass>"
+                    ;;
+            esac
+        fi
+    else
+        plan_select_main_class "$requested_main" "$source_root"
+    fi
+
+    class_name="$PLAN_SELECTED_MAIN"
+    if [[ -z "$class_name" ]]; then
         return 0
     fi
 
-    resolve_main_invocation "$source_root" "$@"
-    class_name="$RESOLVED_MAIN_CLASS"
-    PLAN_RUN_ARGS=("${RESOLVED_ARGS[@]}")
     run_args="$(join_maven_args "${PLAN_RUN_ARGS[@]}")"
-
-    if [[ -n "$class_name" ]]; then
-        PLAN_SELECTED_MAIN="$class_name"
-        if [[ "$#" -gt 0 && "$1" == "$class_name" ]]; then
-            PLAN_SELECTED_MAIN_SOURCE="explicit"
-            PLAN_SELECTED_MAIN_REASON="explicit main class argument"
-        elif [[ -n "$PLAN_REMEMBERED_MAIN" && "$PLAN_REMEMBERED_MAIN" == "$class_name" ]]; then
-            PLAN_SELECTED_MAIN_SOURCE="remembered"
-            PLAN_SELECTED_MAIN_REASON="remembered main still exists in source"
-        else
-            PLAN_SELECTED_MAIN_SOURCE="only-candidate"
-            PLAN_SELECTED_MAIN_REASON="exactly one main class detected"
-        fi
-        plan_add_reason "$PLAN_SELECTED_MAIN_REASON"
-    fi
 
     case "$PLAN_SHAPE" in
         plain-java)
@@ -978,16 +964,17 @@ run_java() {
     local args=()
     local shape
     local source_root
-    shape="$(detect_project_shape)"
-    source_root="$(source_root_for_shape "$shape")"
-    
-    if [[ "$shape" == "unknown" ]]; then
-        error "No Java project detected. Checked for pom.xml and $SRC_DIR/."
+
+    build_plan "$@"
+    if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        print_plan_summary >&2
+        return 1
     fi
 
-    resolve_main_invocation "$source_root" "$@"
-    class_name="$RESOLVED_MAIN_CLASS"
-    args=("${RESOLVED_ARGS[@]}")
+    shape="$PLAN_SHAPE"
+    source_root="$PLAN_SOURCE_ROOT"
+    class_name="$PLAN_SELECTED_MAIN"
+    args=("${PLAN_RUN_ARGS[@]}")
 
     if [[ "$shape" == "maven" ]]; then
         if ! command -v mvn >/dev/null 2>&1; then
