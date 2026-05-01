@@ -203,6 +203,69 @@ append_event_json() {
         "$payload" >> "$JV_RUNS"
 }
 
+tool_event_json() {
+    local tool="$1"
+    local required="false"
+    local available="false"
+    local path=""
+    local version=""
+
+    if tool_is_required "$tool"; then
+        required="true"
+    fi
+    if command -v "$tool" >/dev/null 2>&1; then
+        available="true"
+        path="$(command -v "$tool")"
+        version="$(tool_version "$tool")"
+    fi
+
+    printf '{"name":"%s","required":%s,"available":%s,"path":"%s","version":"%s"}' \
+        "$(json_escape "$tool")" \
+        "$(json_bool "$required")" \
+        "$(json_bool "$available")" \
+        "$(json_escape "$path")" \
+        "$(json_escape "$version")"
+}
+
+tools_event_array_json() {
+    printf '[%s,%s,%s]' "$(tool_event_json java)" "$(tool_event_json javac)" "$(tool_event_json mvn)"
+}
+
+event_classification_for_blockers() {
+    local joined
+    joined="$(join_maven_args "${PLAN_BLOCKERS[@]}")"
+    case "$joined" in
+        *"Multiple main classes"*) printf 'ambiguous-main' ;;
+        *"Required tool missing"*) printf 'missing-tool' ;;
+        *"No main class"*) printf 'missing-main' ;;
+        *"Source root not found"*) printf 'missing-source' ;;
+        *"No Java project detected"*) printf 'unknown-project' ;;
+        *) printf 'blocked' ;;
+    esac
+}
+
+emit_environment_event() {
+    local payload
+    payload="{\"projectShape\":\"$(json_escape "$PLAN_SHAPE")\",\"sourceRoot\":\"$(json_escape "$PLAN_SOURCE_ROOT")\",\"tools\":$(tools_event_array_json)}"
+    append_event_json "environment" "Detected $PLAN_SHAPE project environment" "$payload"
+}
+
+emit_plan_event() {
+    local selected_summary="no selected main"
+    [[ -n "$PLAN_SELECTED_MAIN" ]] && selected_summary="$PLAN_SELECTED_MAIN from $PLAN_SELECTED_MAIN_REASON"
+    local payload
+    payload="{\"projectShape\":\"$(json_escape "$PLAN_SHAPE")\",\"sourceRoot\":\"$(json_escape "$PLAN_SOURCE_ROOT")\",\"mainClass\":{\"selected\":\"$(json_escape "$PLAN_SELECTED_MAIN")\",\"source\":\"$(json_escape "$PLAN_SELECTED_MAIN_SOURCE")\",\"candidates\":$(json_array_from_lines "${PLAN_MAIN_CANDIDATES[@]}")},\"build\":{\"kind\":\"$(json_escape "$PLAN_BUILD_KIND")\",\"display\":\"$(json_escape "$PLAN_BUILD_DISPLAY")\"},\"run\":{\"kind\":\"$(json_escape "$PLAN_RUN_KIND")\",\"display\":\"$(json_escape "$PLAN_RUN_DISPLAY")\",\"args\":$(json_array_from_lines "${PLAN_RUN_ARGS[@]}")},\"reasons\":$(json_array_from_lines "${PLAN_REASONS[@]}"),\"warnings\":$(json_array_from_lines "${PLAN_WARNINGS[@]}")}"
+    append_event_json "plan" "Plan selected $selected_summary" "$payload"
+}
+
+emit_blockers_event() {
+    local classification
+    classification="$(event_classification_for_blockers)"
+    local payload
+    payload="{\"blockers\":$(json_array_from_lines "${PLAN_BLOCKERS[@]}"),\"classification\":\"$(json_escape "$classification")\",\"nextAction\":\"$(json_escape "Run jv doctor for details.")\"}"
+    append_event_json "blockers" "Execution blocked: $classification" "$payload"
+}
+
 write_state() {
     local shape="$1"
     local main_class="$2"
@@ -1048,6 +1111,14 @@ print_doctor_report() {
 
 doctor_project() {
     build_plan
+    if ! emit_environment_event || ! emit_plan_event; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
+    if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        if ! emit_blockers_event; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
+    fi
     print_doctor_report
 }
 
@@ -1093,7 +1164,13 @@ run_java() {
     local shape
 
     build_plan "$@"
+    if ! emit_environment_event || ! emit_plan_event; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
     if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        if ! emit_blockers_event; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         print_plan_summary >&2
         return 1
     fi

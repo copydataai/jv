@@ -207,6 +207,44 @@ JAVA
     assert_contains "$output" "jv run <MainClass>"
 }
 
+test_run_writes_blocker_event_without_execution_start() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    set +e
+    "$JV" run >"$TMP_ROOT/blocker-run.out" 2>&1
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected ambiguous run to fail"
+    fi
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "environment"
+    assert_jsonl_contains_event_type "$events" "plan"
+    assert_jsonl_contains_event_type "$events" "blockers"
+    assert_contains "$(cat "$events")" '"classification":"ambiguous-main"'
+    assert_not_contains "$(cat "$events")" '"eventType":"execution_start"'
+}
+
 test_run_refuses_multiple_plain_main_classes_with_non_candidate_token() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src/com/example"
@@ -1191,6 +1229,7 @@ main() {
     test_run_infers_single_plain_main_class
     test_run_infers_single_plain_main_class_with_args
     test_run_refuses_multiple_plain_main_classes
+    test_run_writes_blocker_event_without_execution_start
     test_run_refuses_multiple_plain_main_classes_with_non_candidate_token
     test_run_ignores_commented_plain_main_signatures
     test_run_ignores_block_commented_plain_main_signatures
