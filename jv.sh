@@ -259,6 +259,27 @@ check_java() {
     fi
 }
 
+tool_version() {
+    local tool="$1"
+    local output
+    case "$tool" in
+        java|javac|mvn)
+            output="$("$tool" -version 2>&1 || true)"
+            printf '%s\n' "${output%%$'\n'*}"
+            ;;
+        *) echo "" ;;
+    esac
+}
+
+tool_is_required() {
+    local tool="$1"
+    local required
+    for required in "${PLAN_REQUIRED_TOOLS[@]}"; do
+        [[ "$required" == "$tool" ]] && return 0
+    done
+    return 1
+}
+
 # Show help
 show_help() {
     echo -e "${GREEN}JV${NC} - Simple Java Wrapper for Daily Tasks"
@@ -701,6 +722,13 @@ build_plan() {
     esac
     plan_add_reason "$PLAN_SHAPE_REASON"
 
+    local tool
+    for tool in "${PLAN_REQUIRED_TOOLS[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            plan_add_blocker "Required tool missing: $tool"
+        fi
+    done
+
     source_root="$(source_root_for_shape "$PLAN_SHAPE")"
     PLAN_SOURCE_ROOT="$source_root"
     if [[ -n "$source_root" && -d "$source_root" ]]; then
@@ -835,6 +863,9 @@ explain_project() {
 
 print_doctor_report() {
     local item
+    local requirement
+    local tool_path
+    local version
 
     echo "JV doctor"
     echo ""
@@ -848,10 +879,22 @@ print_doctor_report() {
     fi
     echo "  Tools:"
     for item in java javac mvn; do
-        if command -v "$item" >/dev/null 2>&1; then
-            echo "    $item: $(command -v "$item")"
+        if tool_is_required "$item"; then
+            requirement="required"
         else
-            echo "    $item: missing"
+            requirement="optional"
+        fi
+
+        if command -v "$item" >/dev/null 2>&1; then
+            tool_path="$(command -v "$item")"
+            version="$(tool_version "$item")"
+            if [[ -n "$version" ]]; then
+                echo "    $item: $tool_path ($requirement) - $version"
+            else
+                echo "    $item: $tool_path ($requirement)"
+            fi
+        else
+            echo "    $item: missing ($requirement)"
         fi
     done
 

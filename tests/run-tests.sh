@@ -856,6 +856,58 @@ JAVA
     assert_contains "$output" "javac:"
 }
 
+test_doctor_reports_tool_versions() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("versions");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" doctor)"
+
+    assert_contains "$output" "java:"
+    assert_contains "$output" "javac:"
+    assert_contains "$output" "required"
+}
+
+test_doctor_survives_broken_tool_versions() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/fake-bin"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("broken versions");
+    }
+}
+JAVA
+    cat > "$TMP_ROOT/fake-bin/java" <<'SH'
+#!/usr/bin/env bash
+echo "broken java version"
+exit 42
+SH
+    cat > "$TMP_ROOT/fake-bin/javac" <<'SH'
+#!/usr/bin/env bash
+echo "broken javac version"
+exit 42
+SH
+    chmod +x "$TMP_ROOT/fake-bin/java" "$TMP_ROOT/fake-bin/javac"
+
+    local output
+    output="$(PATH="$TMP_ROOT/fake-bin:$PATH" "$JV" doctor)"
+
+    assert_contains "$output" "Tools:"
+    assert_contains "$output" "java:"
+    assert_contains "$output" "javac:"
+    assert_contains "$output" "required"
+}
+
 test_doctor_reports_plan_reasons_memory_and_blockers() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -1086,6 +1138,8 @@ main() {
     test_forget_main_rejects_extra_args
     test_maven_explain_and_run
     test_doctor_reports_project_state
+    test_doctor_reports_tool_versions
+    test_doctor_survives_broken_tool_versions
     test_doctor_reports_plan_reasons_memory_and_blockers
     test_doctor_rejects_extra_args
     test_doctor_reports_ambiguous_main_as_blocker
