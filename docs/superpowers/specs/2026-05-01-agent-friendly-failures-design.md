@@ -27,6 +27,8 @@ The promise:
 
 The MVP should add stable text sections and `.jv/runs.jsonl` failure events. It should not add `jv run --json` or `jv doctor --json` yet.
 
+Recommended sequencing: implement Agent-Grade JV Events first, then implement this failure UX slice on top of the shared event writer. If this slice is implemented before Agent-Grade JV Events, the simple event examples below are acceptable as a temporary compatibility shape; once the event envelope exists, blocked, failed, and warning records should use the schema-versioned event envelope with failure details in `payload`.
+
 Reasons:
 
 - Stable text sections are immediately useful in terminals, tests, logs, and agent transcripts.

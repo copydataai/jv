@@ -18,6 +18,10 @@
 
 No new production files are required for this slice.
 
+## Dependency Note
+
+Preferred implementation order is Agent-Grade JV Events first, then this failure UX slice. When the event writer from `docs/superpowers/plans/2026-05-01-agent-grade-events.md` exists, use that writer for blocked, failed, and warning records instead of adding a parallel ad hoc event writer. If this plan is implemented first, keep the event helper small and compatible so the later event-envelope work can replace it without changing the stable `JV failure` / `JV warning` text contract.
+
 ## Stable Output Contract
 
 Failure block:
