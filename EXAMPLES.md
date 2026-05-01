@@ -1,11 +1,37 @@
 # JV Examples
 
+## Explain Before Running
+
+```bash
+jv explain
+jv run
+```
+
+`jv explain` prints the same plan `jv run` will execute without compiling or running the program.
+
+## Diagnose A Project
+
+```bash
+jv doctor
+```
+
+Use `jv doctor` when JV surprises you. It prints what JV detected, why it selected a main class, which command it would run, and what blocks execution.
+
+## Multiple Main Classes
+
+```bash
+jv doctor
+jv run com.example.App
+jv remember main com.example.App
+jv run
+```
+
 ## Example 1: Simple Hello World (No Package)
 
 ```bash
 jv create hello-world
 cd hello-world
-jv run Main
+jv run
 ```
 
 Output:

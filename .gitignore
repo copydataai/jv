@@ -1,6 +1,7 @@
 # Compiled files
 *.class
 bin/
+.jv/
 
 # IDE
 .vscode/
