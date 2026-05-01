@@ -102,6 +102,12 @@ jv clean
 
 ---
 
+### Inspect The Plan
+
+`jv doctor` shows the same planner model that powers `jv run` and `jv explain`: project shape, source roots, tool availability, selected main class, reasons, warnings, blockers, and `.jv/` memory status.
+
+---
+
 ### Generated JV Memory
 
 JV does not require a hand-written config file for normal projects. Source files and build tools are truth; `.jv/` is generated memory. JV writes `.jv/state.json` and `.jv/runs.jsonl` after successful runs so humans and coding agents can inspect what JV detected and executed.

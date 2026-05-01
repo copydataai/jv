@@ -9,6 +9,14 @@ jv run
 
 `jv explain` prints the same plan `jv run` will execute without compiling or running the program.
 
+## Diagnose A Project
+
+```bash
+jv doctor
+```
+
+Use `jv doctor` when JV surprises you. It prints what JV detected, why it selected a main class, which command it would run, and what blocks execution.
+
 ## Multiple Main Classes
 
 ```bash
