@@ -467,6 +467,28 @@ JAVA
     assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"detail":"java -cp bin Main one two"'
 }
 
+test_run_state_contains_planner_reasons() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("state reasons");
+    }
+}
+JAVA
+
+    "$JV" run >"$TMP_ROOT/state-reasons.out"
+
+    local state
+    state="$(cat "$TMP_ROOT/app/.jv/state.json")"
+    assert_contains "$state" '"planner":'
+    assert_contains "$state" '"selectedMainSource": "only-candidate"'
+    assert_contains "$state" '"reasons":'
+    assert_contains "$state" 'exactly one main class detected'
+}
+
 test_run_memory_write_failure_preserves_success_exit() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -1125,6 +1147,7 @@ main() {
     test_run_and_explain_share_plain_plan_output
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
+    test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
     test_run_escapes_control_characters_in_memory_json

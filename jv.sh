@@ -88,6 +88,20 @@ json_escape() {
     done < <(printf '%s' "$1" | LC_ALL=C od -An -tx1 -v)
 }
 
+json_array_from_lines() {
+    local item
+    local first=1
+    printf '['
+    for item in "$@"; do
+        if [[ $first -eq 0 ]]; then
+            printf ', '
+        fi
+        printf '"%s"' "$(json_escape "$item")"
+        first=0
+    done
+    printf ']'
+}
+
 valid_main_class_name() {
     local main_class="$1"
     [[ "$main_class" =~ ^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$ ]]
@@ -157,6 +171,14 @@ EOF
   "lastPlan": {
     "build": "$(json_escape "$build_command")",
     "run": "$(json_escape "$run_command")"
+  },
+  "planner": {
+    "shapeReason": "$(json_escape "$PLAN_SHAPE_REASON")",
+    "sourceRoot": "$(json_escape "$PLAN_SOURCE_ROOT")",
+    "selectedMainSource": "$(json_escape "$PLAN_SELECTED_MAIN_SOURCE")",
+    "reasons": $(json_array_from_lines "${PLAN_REASONS[@]}"),
+    "warnings": $(json_array_from_lines "${PLAN_WARNINGS[@]}"),
+    "blockers": $(json_array_from_lines "${PLAN_BLOCKERS[@]}")
   }
 }
 EOF
