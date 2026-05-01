@@ -266,6 +266,27 @@ emit_blockers_event() {
     append_event_json "blockers" "Execution blocked: $classification" "$payload"
 }
 
+emit_execution_start_event() {
+    local phase="$1"
+    local kind="$2"
+    local display="$3"
+    local payload
+    payload="{\"phase\":\"$(json_escape "$phase")\",\"step\":{\"kind\":\"$(json_escape "$kind")\",\"display\":\"$(json_escape "$display")\"}}"
+    append_event_json "execution_start" "Starting $phase step" "$payload"
+}
+
+emit_execution_result_event() {
+    local phase="$1"
+    local kind="$2"
+    local display="$3"
+    local status="$4"
+    local exit_code="$5"
+    local classification="$6"
+    local payload
+    payload="{\"phase\":\"$(json_escape "$phase")\",\"status\":\"$(json_escape "$status")\",\"exitCode\":$exit_code,\"classification\":\"$(json_escape "$classification")\",\"step\":{\"kind\":\"$(json_escape "$kind")\",\"display\":\"$(json_escape "$display")\"}}"
+    append_event_json "execution_result" "$phase $status with exit code $exit_code" "$payload"
+}
+
 write_state() {
     local shape="$1"
     local main_class="$2"
@@ -1190,14 +1211,26 @@ run_java() {
         local maven_args
         maven_args="$(join_maven_args "${args[@]}")"
 
+        if ! emit_execution_start_event "compile" "maven" "$PLAN_BUILD_DISPLAY"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         set +e
         mvn compile
         local maven_status=$?
         set -e
         if [[ $maven_status -ne 0 ]]; then
+            if ! emit_execution_result_event "compile" "maven" "$PLAN_BUILD_DISPLAY" "failure" "$maven_status" "compile-failure"; then
+                warn "Could not write JV events to $JV_RUNS"
+            fi
             return "$maven_status"
         fi
+        if ! emit_execution_result_event "compile" "maven" "$PLAN_BUILD_DISPLAY" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
 
+        if ! emit_execution_start_event "run" "maven" "$PLAN_RUN_DISPLAY"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         set +e
         if [[ -n "$maven_args" ]]; then
             mvn -q exec:java -Dexec.mainClass="$class_name" -Dexec.args="$maven_args"
@@ -1207,7 +1240,13 @@ run_java() {
         maven_status=$?
         set -e
         if [[ $maven_status -ne 0 ]]; then
+            if ! emit_execution_result_event "run" "maven" "$PLAN_RUN_DISPLAY" "failure" "$maven_status" "runtime-failure"; then
+                warn "Could not write JV events to $JV_RUNS"
+            fi
             return "$maven_status"
+        fi
+        if ! emit_execution_result_event "run" "maven" "$PLAN_RUN_DISPLAY" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
         fi
 
         if ! write_success_memory_from_plan; then
@@ -1242,14 +1281,24 @@ run_java() {
     echo -e ""
     
     # Run the program
+    if ! emit_execution_start_event "run" "java" "$PLAN_RUN_DISPLAY"; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
     set +e
     java -cp "$classpath" "$class_name" "${args[@]}"
     local java_status=$?
     set -e
 
     if [[ $java_status -eq 0 ]]; then
+        if ! emit_execution_result_event "run" "java" "$PLAN_RUN_DISPLAY" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         if ! write_success_memory_from_plan; then
             warn "Could not write JV memory to $JV_DIR/"
+        fi
+    else
+        if ! emit_execution_result_event "run" "java" "$PLAN_RUN_DISPLAY" "failure" "$java_status" "runtime-failure"; then
+            warn "Could not write JV events to $JV_RUNS"
         fi
     fi
 

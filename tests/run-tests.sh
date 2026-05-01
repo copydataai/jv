@@ -686,6 +686,35 @@ JAVA
     assert_not_exists "$TMP_ROOT/app/.jv/state.json"
 }
 
+test_run_failure_writes_execution_result_event_without_success_memory() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("event failure");
+        System.exit(7);
+    }
+}
+JAVA
+
+    set +e
+    "$JV" run >"$TMP_ROOT/failure-events.out" 2>&1
+    local status=$?
+    set -e
+
+    assert_status "$status" 7
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_contains "$(cat "$events")" '"status":"failure"'
+    assert_contains "$(cat "$events")" '"exitCode":7'
+    assert_contains "$(cat "$events")" '"classification":"runtime-failure"'
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
 test_remember_main_resolves_ambiguity() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -1252,6 +1281,7 @@ main() {
     test_run_state_write_failure_warns_even_when_run_log_can_append
     test_run_escapes_control_characters_in_memory_json
     test_run_failure_does_not_write_success_memory
+    test_run_failure_writes_execution_result_event_without_success_memory
     test_remember_main_resolves_ambiguity
     test_remember_main_rejects_stale_source_memory
     test_run_with_args_ignores_remembered_main_when_ambiguous
