@@ -31,6 +31,27 @@ BIN_DIR="bin"
 LIB_DIR="lib"
 RESOLVED_MAIN_CLASS=""
 RESOLVED_ARGS=()
+PLAN_SHAPE=""
+PLAN_SHAPE_REASON=""
+PLAN_SOURCE_ROOT=""
+PLAN_SOURCE_ROOT_REASON=""
+PLAN_SELECTED_MAIN=""
+PLAN_SELECTED_MAIN_SOURCE=""
+PLAN_SELECTED_MAIN_REASON=""
+PLAN_BUILD_DISPLAY=""
+PLAN_RUN_DISPLAY=""
+PLAN_BUILD_KIND=""
+PLAN_RUN_KIND=""
+PLAN_REQUIRED_TOOLS=()
+PLAN_MAIN_CANDIDATES=()
+PLAN_REASONS=()
+PLAN_WARNINGS=()
+PLAN_BLOCKERS=()
+PLAN_REMEMBERED_MAIN=""
+PLAN_MEMORY_STATE=""
+PLAN_LAST_SUCCESSFUL_MAIN=""
+PLAN_LAST_RUN_SUMMARY=""
+PLAN_RUN_ARGS=()
 
 # Helper functions
 error() {
@@ -72,6 +93,42 @@ json_escape() {
 valid_main_class_name() {
     local main_class="$1"
     [[ "$main_class" =~ ^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$ ]]
+}
+
+reset_plan() {
+    PLAN_SHAPE=""
+    PLAN_SHAPE_REASON=""
+    PLAN_SOURCE_ROOT=""
+    PLAN_SOURCE_ROOT_REASON=""
+    PLAN_SELECTED_MAIN=""
+    PLAN_SELECTED_MAIN_SOURCE=""
+    PLAN_SELECTED_MAIN_REASON=""
+    PLAN_BUILD_DISPLAY=""
+    PLAN_RUN_DISPLAY=""
+    PLAN_BUILD_KIND=""
+    PLAN_RUN_KIND=""
+    PLAN_REQUIRED_TOOLS=()
+    PLAN_MAIN_CANDIDATES=()
+    PLAN_REASONS=()
+    PLAN_WARNINGS=()
+    PLAN_BLOCKERS=()
+    PLAN_REMEMBERED_MAIN=""
+    PLAN_MEMORY_STATE="none"
+    PLAN_LAST_SUCCESSFUL_MAIN=""
+    PLAN_LAST_RUN_SUMMARY=""
+    PLAN_RUN_ARGS=()
+}
+
+plan_add_reason() {
+    PLAN_REASONS+=("$1")
+}
+
+plan_add_warning() {
+    PLAN_WARNINGS+=("$1")
+}
+
+plan_add_blocker() {
+    PLAN_BLOCKERS+=("$1")
 }
 
 ensure_jv_dir() {
@@ -119,6 +176,16 @@ append_run_event() {
 remembered_main_class() {
     [[ -f "$JV_STATE" ]] || return 0
     sed -n 's/^[[:space:]]*"rememberedMainClass"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$JV_STATE" | head -n 1
+}
+
+read_last_successful_main() {
+    [[ -f "$JV_STATE" ]] || return 0
+    sed -n 's/^[[:space:]]*"lastSuccessfulMainClass"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$JV_STATE" | head -n 1
+}
+
+read_last_plan_run() {
+    [[ -f "$JV_STATE" ]] || return 0
+    sed -n 's/^[[:space:]]*"run"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$JV_STATE" | head -n 1
 }
 
 state_has_run_memory() {
@@ -634,32 +701,142 @@ join_maven_args() {
     printf '%s' "$joined"
 }
 
-explain_project() {
-    local shape
+build_plan() {
     local source_root
     local class_name
     local run_args
+    local main_class
 
-    shape="$(detect_project_shape)"
-    source_root="$(source_root_for_shape "$shape")"
-
-    case "$shape" in
-        plain-java)
-            resolve_main_invocation "$source_root" "$@"
-            class_name="$RESOLVED_MAIN_CLASS"
-            run_args="$(join_maven_args "${RESOLVED_ARGS[@]}")"
-            print_plain_java_plan "$source_root" "$class_name" "$run_args"
-            ;;
+    reset_plan
+    PLAN_SHAPE="$(detect_project_shape)"
+    case "$PLAN_SHAPE" in
         maven)
-            resolve_main_invocation "$source_root" "$@"
-            class_name="$RESOLVED_MAIN_CLASS"
-            run_args="$(join_maven_args "${RESOLVED_ARGS[@]}")"
-            print_maven_plan "$source_root" "$class_name" "$run_args"
+            PLAN_SHAPE_REASON="pom.xml found in project root"
+            PLAN_REQUIRED_TOOLS=("java" "mvn")
+            ;;
+        plain-java)
+            PLAN_SHAPE_REASON="$SRC_DIR directory found"
+            PLAN_REQUIRED_TOOLS=("java" "javac")
             ;;
         *)
-            error "No Java project detected. Checked for pom.xml and $SRC_DIR/."
+            PLAN_SHAPE_REASON="no recognized Java project markers found"
+            plan_add_blocker "No Java project detected. Checked for pom.xml and $SRC_DIR/."
+            return 0
             ;;
     esac
+    plan_add_reason "$PLAN_SHAPE_REASON"
+
+    source_root="$(source_root_for_shape "$PLAN_SHAPE")"
+    PLAN_SOURCE_ROOT="$source_root"
+    if [[ -n "$source_root" && -d "$source_root" ]]; then
+        PLAN_SOURCE_ROOT_REASON="$source_root exists"
+        plan_add_reason "$PLAN_SOURCE_ROOT_REASON"
+    else
+        PLAN_SOURCE_ROOT_REASON="$source_root missing"
+        plan_add_blocker "Source root not found: $source_root"
+        return 0
+    fi
+
+    PLAN_REMEMBERED_MAIN="$(remembered_main_class)"
+    PLAN_LAST_SUCCESSFUL_MAIN="$(read_last_successful_main)"
+    PLAN_LAST_RUN_SUMMARY="$(read_last_plan_run)"
+    if [[ -f "$JV_STATE" ]]; then
+        PLAN_MEMORY_STATE="present"
+    fi
+
+    if [[ -n "$source_root" && -d "$source_root" ]]; then
+        while IFS= read -r main_class; do
+            [[ -n "$main_class" ]] && PLAN_MAIN_CANDIDATES+=("$main_class")
+        done < <(find_main_classes "$source_root")
+    fi
+
+    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 0 ]]; then
+        plan_add_blocker "No main class found in $source_root. Add a public static void main(String[] args) method."
+        return 0
+    fi
+
+    resolve_main_invocation "$source_root" "$@"
+    class_name="$RESOLVED_MAIN_CLASS"
+    PLAN_RUN_ARGS=("${RESOLVED_ARGS[@]}")
+    run_args="$(join_maven_args "${PLAN_RUN_ARGS[@]}")"
+
+    if [[ -n "$class_name" ]]; then
+        PLAN_SELECTED_MAIN="$class_name"
+        if [[ "$#" -gt 0 && "$1" == "$class_name" ]]; then
+            PLAN_SELECTED_MAIN_SOURCE="explicit"
+            PLAN_SELECTED_MAIN_REASON="explicit main class argument"
+        elif [[ -n "$PLAN_REMEMBERED_MAIN" && "$PLAN_REMEMBERED_MAIN" == "$class_name" ]]; then
+            PLAN_SELECTED_MAIN_SOURCE="remembered"
+            PLAN_SELECTED_MAIN_REASON="remembered main still exists in source"
+        else
+            PLAN_SELECTED_MAIN_SOURCE="only-candidate"
+            PLAN_SELECTED_MAIN_REASON="exactly one main class detected"
+        fi
+        plan_add_reason "$PLAN_SELECTED_MAIN_REASON"
+    fi
+
+    case "$PLAN_SHAPE" in
+        plain-java)
+            local classpath
+            classpath="$(build_classpath)"
+            PLAN_BUILD_KIND="javac"
+            PLAN_RUN_KIND="java"
+            PLAN_BUILD_DISPLAY="javac -d $BIN_DIR -cp $classpath <sources>"
+            PLAN_RUN_DISPLAY="java -cp $classpath $class_name"
+            [[ -n "$run_args" ]] && PLAN_RUN_DISPLAY="$PLAN_RUN_DISPLAY $run_args"
+            ;;
+        maven)
+            PLAN_BUILD_KIND="maven"
+            PLAN_RUN_KIND="maven"
+            PLAN_BUILD_DISPLAY="mvn compile"
+            PLAN_RUN_DISPLAY="mvn -q exec:java -Dexec.mainClass=$class_name"
+            [[ -n "$run_args" ]] && PLAN_RUN_DISPLAY="$PLAN_RUN_DISPLAY -Dexec.args=\"$run_args\""
+            ;;
+    esac
+
+    return 0
+}
+
+print_plan_summary() {
+    : "${PLAN_SHAPE_REASON}" "${PLAN_SOURCE_ROOT_REASON}" "${PLAN_SELECTED_MAIN_SOURCE}"
+    : "${PLAN_BUILD_KIND}" "${PLAN_RUN_KIND}" "${PLAN_MEMORY_STATE}"
+    : "${PLAN_LAST_SUCCESSFUL_MAIN}" "${PLAN_LAST_RUN_SUMMARY}"
+    : "${PLAN_REQUIRED_TOOLS[@]}" "${PLAN_MAIN_CANDIDATES[@]}"
+    case "$PLAN_SHAPE" in
+        maven) echo "JV detected: Maven project" ;;
+        plain-java) echo "JV detected: plain Java project" ;;
+        *) echo "JV detected: unknown project" ;;
+    esac
+    [[ -n "$PLAN_SOURCE_ROOT" ]] && echo "Source roots: $PLAN_SOURCE_ROOT"
+    [[ -n "$PLAN_SELECTED_MAIN" ]] && echo "Main class: $PLAN_SELECTED_MAIN"
+    [[ -n "$PLAN_BUILD_DISPLAY" ]] && echo "Build path: $PLAN_BUILD_DISPLAY"
+    [[ -n "$PLAN_RUN_DISPLAY" ]] && echo "Run path: $PLAN_RUN_DISPLAY"
+    if [[ ${#PLAN_REASONS[@]} -gt 0 ]]; then
+        local reason
+        for reason in "${PLAN_REASONS[@]}"; do
+            echo "Reason: $reason"
+        done
+    fi
+    if [[ ${#PLAN_WARNINGS[@]} -gt 0 ]]; then
+        local warning
+        for warning in "${PLAN_WARNINGS[@]}"; do
+            echo "Warning: $warning"
+        done
+    fi
+    if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        local blocker
+        for blocker in "${PLAN_BLOCKERS[@]}"; do
+            echo "Blocker: $blocker"
+        done
+    fi
+}
+
+explain_project() {
+    build_plan "$@"
+    print_plan_summary
+    if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        return 1
+    fi
 }
 
 doctor_project() {

@@ -802,6 +802,77 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "jv doctor                             # Inspect detected project state"
 }
 
+test_explain_shows_reasons_and_no_side_effects() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("planner");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" explain)"
+
+    assert_contains "$output" "Reason: src directory found"
+    assert_contains "$output" "Reason: exactly one main class detected"
+    assert_not_exists "$TMP_ROOT/app/bin"
+    assert_not_exists "$TMP_ROOT/app/.jv"
+}
+
+test_explain_reports_missing_maven_source_root_as_blocker() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+    cat > pom.xml <<'XML'
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>missing-source</artifactId>
+  <version>1.0.0</version>
+</project>
+XML
+
+    set +e
+    local output
+    output="$("$JV" explain 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected explain with missing Maven source root to fail"
+    fi
+    assert_contains "$output" "JV detected: Maven project"
+    assert_contains "$output" "Source roots: src/main/java"
+    assert_contains "$output" "Reason: pom.xml found in project root"
+    assert_contains "$output" "Blocker: Source root not found: src/main/java"
+    assert_not_contains "$output" "Error:"
+}
+
+test_explain_reports_empty_src_as_blocker() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+
+    set +e
+    local output
+    output="$("$JV" explain 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected explain with empty src to fail"
+    fi
+    assert_contains "$output" "JV detected: plain Java project"
+    assert_contains "$output" "Source roots: src"
+    assert_contains "$output" "Reason: src directory found"
+    assert_contains "$output" "Blocker: No main class found in src. Add a public static void main(String[] args) method."
+    assert_not_contains "$output" "Error:"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -818,6 +889,9 @@ main() {
     test_run_detects_main_after_block_comment_with_quote_before_terminator
     test_explain_prints_plan_without_compiling
     test_explain_prints_plain_run_args
+    test_explain_shows_reasons_and_no_side_effects
+    test_explain_reports_missing_maven_source_root_as_blocker
+    test_explain_reports_empty_src_as_blocker
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
     test_run_memory_write_failure_preserves_success_exit
