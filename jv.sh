@@ -171,6 +171,14 @@ append_run_event() {
     printf '{"event":"%s","detail":"%s"}\n' "$(json_escape "$event")" "$(json_escape "$detail")" >> "$JV_RUNS"
 }
 
+write_success_memory_from_plan() {
+    if [[ -z "$PLAN_SELECTED_MAIN" || -z "$PLAN_BUILD_DISPLAY" || -z "$PLAN_RUN_DISPLAY" ]]; then
+        return 1
+    fi
+    write_state "$PLAN_SHAPE" "$PLAN_SELECTED_MAIN" "$PLAN_BUILD_DISPLAY" "$PLAN_RUN_DISPLAY" || return 1
+    append_run_event "executed" "$PLAN_RUN_DISPLAY" || return 1
+}
+
 remembered_main_class() {
     [[ -f "$JV_STATE" ]] || return 0
     sed -n 's/^[[:space:]]*"rememberedMainClass"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$JV_STATE" | head -n 1
@@ -963,7 +971,6 @@ run_java() {
     local class_name
     local args=()
     local shape
-    local source_root
 
     build_plan "$@"
     if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
@@ -972,9 +979,11 @@ run_java() {
     fi
 
     shape="$PLAN_SHAPE"
-    source_root="$PLAN_SOURCE_ROOT"
     class_name="$PLAN_SELECTED_MAIN"
     args=("${PLAN_RUN_ARGS[@]}")
+
+    print_plan_summary
+    echo ""
 
     if [[ "$shape" == "maven" ]]; then
         if ! command -v mvn >/dev/null 2>&1; then
@@ -982,14 +991,7 @@ run_java() {
         fi
 
         local maven_args
-        local run_command="mvn -q exec:java -Dexec.mainClass=$class_name"
         maven_args="$(join_maven_args "${args[@]}")"
-        if [[ -n "$maven_args" ]]; then
-            run_command="$run_command -Dexec.args=\"$maven_args\""
-        fi
-
-        print_maven_plan "$source_root" "$class_name" "$maven_args"
-        echo ""
 
         set +e
         mvn compile
@@ -1011,8 +1013,7 @@ run_java() {
             return "$maven_status"
         fi
 
-        local build_command="mvn compile"
-        if ! write_state "$shape" "$class_name" "$build_command" "$run_command" || ! append_run_event "executed" "$run_command"; then
+        if ! write_success_memory_from_plan; then
             warn "Could not write JV memory to $JV_DIR/"
         fi
         return 0
@@ -1040,10 +1041,6 @@ run_java() {
     local classpath
     classpath=$(build_classpath)
     
-    local plain_args
-    plain_args="$(join_maven_args "${args[@]}")"
-    print_plain_java_plan "$source_root" "$class_name" "$plain_args"
-    echo ""
     info "Running $class_name..."
     echo -e ""
     
@@ -1054,12 +1051,7 @@ run_java() {
     set -e
 
     if [[ $java_status -eq 0 ]]; then
-        local build_command="javac -d $BIN_DIR -cp $classpath <sources>"
-        local run_command="java -cp $classpath $class_name"
-        if [[ -n "$plain_args" ]]; then
-            run_command="$run_command $plain_args"
-        fi
-        if ! write_state "$shape" "$class_name" "$build_command" "$run_command" || ! append_run_event "executed" "$run_command"; then
+        if ! write_success_memory_from_plan; then
             warn "Could not write JV memory to $JV_DIR/"
         fi
     fi

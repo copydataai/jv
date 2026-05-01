@@ -493,6 +493,31 @@ JAVA
     assert_contains "$output" "Warning:"
 }
 
+test_run_state_write_failure_warns_even_when_run_log_can_append() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/.jv/state.json"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("partial memory");
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -ne 0 ]]; then
+        fail "Expected successful Java run to preserve exit 0 when state write fails; got $status"
+    fi
+    assert_contains "$output" "partial memory"
+    assert_contains "$output" "Warning: Could not write JV memory"
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1004,6 +1029,28 @@ test_explain_reports_empty_src_as_blocker() {
     assert_not_contains "$output" "Error:"
 }
 
+test_run_and_explain_share_plain_plan_output() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("same plan");
+    }
+}
+JAVA
+
+    local explain_output
+    local run_output
+    explain_output="$("$JV" explain one two)"
+    run_output="$("$JV" run one two)"
+
+    assert_contains "$explain_output" "Run path: java -cp bin Main one two"
+    assert_contains "$run_output" "Run path: java -cp bin Main one two"
+    assert_contains "$run_output" "same plan"
+}
+
 main() {
     test_create_compile_run_packaged_project
     test_create_does_not_write_jv_json
@@ -1023,9 +1070,11 @@ main() {
     test_explain_shows_reasons_and_no_side_effects
     test_explain_reports_missing_maven_source_root_as_blocker
     test_explain_reports_empty_src_as_blocker
+    test_run_and_explain_share_plain_plan_output
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
     test_run_memory_write_failure_preserves_success_exit
+    test_run_state_write_failure_warns_even_when_run_log_can_append
     test_run_escapes_control_characters_in_memory_json
     test_run_failure_does_not_write_success_memory
     test_remember_main_resolves_ambiguity
