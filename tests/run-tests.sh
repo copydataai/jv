@@ -761,12 +761,39 @@ JAVA
     output="$("$JV" doctor)"
 
     assert_contains "$output" "JV doctor"
-    assert_contains "$output" "Project shape: plain-java"
+    assert_contains "$output" "Shape: plain-java"
     assert_contains "$output" "Source roots: src"
     assert_contains "$output" "Main class candidates:"
     assert_contains "$output" "Main"
     assert_contains "$output" "java:"
     assert_contains "$output" "javac:"
+}
+
+test_doctor_reports_plan_reasons_memory_and_blockers() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("doctor plan");
+    }
+}
+JAVA
+
+    "$JV" run >"$TMP_ROOT/doctor-run.out"
+
+    local output
+    output="$("$JV" doctor)"
+
+    assert_contains "$output" "Selected plan"
+    assert_contains "$output" "Main class: Main"
+    assert_contains "$output" "Reasons"
+    assert_contains "$output" "exactly one main class detected"
+    assert_contains "$output" "Memory"
+    assert_contains "$output" "Last successful main: Main"
+    assert_contains "$output" "Warnings"
+    assert_contains "$output" "Blockers"
 }
 
 test_doctor_rejects_extra_args() {
@@ -904,6 +931,7 @@ main() {
     test_forget_main_rejects_extra_args
     test_maven_explain_and_run
     test_doctor_reports_project_state
+    test_doctor_reports_plan_reasons_memory_and_blockers
     test_doctor_rejects_extra_args
     test_help_lists_diagnostics_commands
     echo "All tests passed"

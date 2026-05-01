@@ -839,50 +839,102 @@ explain_project() {
     fi
 }
 
-doctor_project() {
-    local shape
-    local source_root
-    shape="$(detect_project_shape)"
-    source_root="$(source_root_for_shape "$shape")"
+print_doctor_report() {
+    local item
 
     echo "JV doctor"
-    echo "Project shape: $shape"
-    if [[ -n "$source_root" ]]; then
-        echo "Source roots: $source_root"
+    echo ""
+    echo "Project"
+    echo "  Shape: $PLAN_SHAPE"
+    echo "  Shape reason: $PLAN_SHAPE_REASON"
+    if [[ -n "$PLAN_SOURCE_ROOT" ]]; then
+        echo "  Source roots: $PLAN_SOURCE_ROOT"
     else
-        echo "Source roots: none detected"
+        echo "  Source roots: none detected"
     fi
-
-    echo "Tools:"
-    if command -v java >/dev/null 2>&1; then
-        echo "  java: $(command -v java)"
-    else
-        echo "  java: missing"
-    fi
-    if command -v javac >/dev/null 2>&1; then
-        echo "  javac: $(command -v javac)"
-    else
-        echo "  javac: missing"
-    fi
-    if command -v mvn >/dev/null 2>&1; then
-        echo "  mvn: $(command -v mvn)"
-    else
-        echo "  mvn: missing"
-    fi
-
-    echo "Main class candidates:"
-    if [[ -n "$source_root" && -d "$source_root" ]]; then
-        local found=0
-        while IFS= read -r main_class; do
-            found=1
-            echo "  $main_class"
-        done < <(find_main_classes "$source_root")
-        if [[ $found -eq 0 ]]; then
-            echo "  none"
+    echo "  Tools:"
+    for item in java javac mvn; do
+        if command -v "$item" >/dev/null 2>&1; then
+            echo "    $item: $(command -v "$item")"
+        else
+            echo "    $item: missing"
         fi
+    done
+
+    echo ""
+    echo "Selected plan"
+    if [[ -n "$PLAN_SELECTED_MAIN" ]]; then
+        echo "  Main class: $PLAN_SELECTED_MAIN"
+        echo "  Main source: $PLAN_SELECTED_MAIN_SOURCE"
     else
-        echo "  none"
+        echo "  Main class: none"
     fi
+    [[ -n "$PLAN_BUILD_DISPLAY" ]] && echo "  Build: $PLAN_BUILD_DISPLAY"
+    [[ -n "$PLAN_RUN_DISPLAY" ]] && echo "  Run: $PLAN_RUN_DISPLAY"
+
+    echo ""
+    echo "Main class candidates:"
+    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 0 ]]; then
+        echo "  none"
+    else
+        for item in "${PLAN_MAIN_CANDIDATES[@]}"; do
+            echo "  $item"
+        done
+    fi
+
+    echo ""
+    echo "Reasons"
+    if [[ ${#PLAN_REASONS[@]} -eq 0 ]]; then
+        echo "  none"
+    else
+        for item in "${PLAN_REASONS[@]}"; do
+            echo "  - $item"
+        done
+    fi
+
+    echo ""
+    echo "Memory"
+    echo "  State: $PLAN_MEMORY_STATE"
+    if [[ -n "$PLAN_REMEMBERED_MAIN" ]]; then
+        echo "  Remembered main: $PLAN_REMEMBERED_MAIN"
+    else
+        echo "  Remembered main: none"
+    fi
+    if [[ -n "$PLAN_LAST_SUCCESSFUL_MAIN" ]]; then
+        echo "  Last successful main: $PLAN_LAST_SUCCESSFUL_MAIN"
+    else
+        echo "  Last successful main: none"
+    fi
+    if [[ -n "$PLAN_LAST_RUN_SUMMARY" ]]; then
+        echo "  Last run: $PLAN_LAST_RUN_SUMMARY"
+    else
+        echo "  Last run: none"
+    fi
+
+    echo ""
+    echo "Warnings"
+    if [[ ${#PLAN_WARNINGS[@]} -eq 0 ]]; then
+        echo "  none"
+    else
+        for item in "${PLAN_WARNINGS[@]}"; do
+            echo "  - $item"
+        done
+    fi
+
+    echo ""
+    echo "Blockers"
+    if [[ ${#PLAN_BLOCKERS[@]} -eq 0 ]]; then
+        echo "  none"
+    else
+        for item in "${PLAN_BLOCKERS[@]}"; do
+            echo "  - $item"
+        done
+    fi
+}
+
+doctor_project() {
+    build_plan
+    print_doctor_report
 }
 
 # Compile Java files
