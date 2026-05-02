@@ -50,6 +50,10 @@ PLAN_MEMORY_STATE=""
 PLAN_LAST_SUCCESSFUL_MAIN=""
 PLAN_LAST_RUN_SUMMARY=""
 PLAN_RUN_ARGS=()
+EVENT_RUN_ID=""
+EVENT_SEQUENCE=0
+EVENT_COMMAND_NAME=""
+EVENT_COMMAND_ARGV=()
 
 # Helper functions
 error() {
@@ -94,12 +98,26 @@ json_array_from_lines() {
     printf '['
     for item in "$@"; do
         if [[ $first -eq 0 ]]; then
-            printf ', '
+            printf ','
         fi
         printf '"%s"' "$(json_escape "$item")"
         first=0
     done
     printf ']'
+}
+
+json_bool() {
+    if [[ "${1:-}" == "true" ]]; then
+        printf 'true'
+    else
+        printf 'false'
+    fi
+}
+
+json_string_field() {
+    local name="$1"
+    local value="$2"
+    printf '"%s":"%s"' "$name" "$(json_escape "$value")"
 }
 
 valid_main_class_name() {
@@ -147,6 +165,137 @@ ensure_jv_dir() {
     mkdir -p "$JV_DIR"
 }
 
+event_timestamp() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+event_init() {
+    local command_name="$1"
+    shift || true
+    EVENT_COMMAND_NAME="$command_name"
+    EVENT_COMMAND_ARGV=("jv" "$command_name" "$@")
+    EVENT_RUN_ID="run_$(date -u +"%Y%m%dT%H%M%SZ")_$$"
+    EVENT_SEQUENCE=0
+}
+
+event_command_json() {
+    printf '{"name":"%s","argv":%s}' \
+        "$(json_escape "$EVENT_COMMAND_NAME")" \
+        "$(json_array_from_lines "${EVENT_COMMAND_ARGV[@]}")"
+}
+
+append_event_json() {
+    local event_type="$1"
+    local summary="$2"
+    local payload="$3"
+
+    [[ -n "$EVENT_RUN_ID" ]] || event_init "unknown"
+    EVENT_SEQUENCE=$((EVENT_SEQUENCE + 1))
+    ensure_jv_dir || return 1
+    printf '{"schemaVersion":1,"eventType":"%s","runId":"%s","sequence":%d,"timestamp":"%s","cwd":"%s","command":%s,"summary":"%s","payload":%s}\n' \
+        "$(json_escape "$event_type")" \
+        "$(json_escape "$EVENT_RUN_ID")" \
+        "$EVENT_SEQUENCE" \
+        "$(event_timestamp)" \
+        "$(json_escape "$PWD")" \
+        "$(event_command_json)" \
+        "$(json_escape "$summary")" \
+        "$payload" >> "$JV_RUNS"
+}
+
+tool_event_json() {
+    local tool="$1"
+    local required="false"
+    local available="false"
+    local path=""
+    local version=""
+
+    if tool_is_required "$tool"; then
+        required="true"
+    fi
+    if command -v "$tool" >/dev/null 2>&1; then
+        available="true"
+        path="$(command -v "$tool")"
+        version="$(tool_version "$tool")"
+    fi
+
+    printf '{"name":"%s","required":%s,"available":%s,"path":"%s","version":"%s"}' \
+        "$(json_escape "$tool")" \
+        "$(json_bool "$required")" \
+        "$(json_bool "$available")" \
+        "$(json_escape "$path")" \
+        "$(json_escape "$version")"
+}
+
+tools_event_array_json() {
+    printf '[%s,%s,%s]' "$(tool_event_json java)" "$(tool_event_json javac)" "$(tool_event_json mvn)"
+}
+
+event_classification_for_blockers() {
+    local joined
+    joined="$(join_maven_args "${PLAN_BLOCKERS[@]}")"
+    case "$joined" in
+        *"Multiple main classes"*) printf 'ambiguous-main' ;;
+        *"Required tool missing"*) printf 'missing-tool' ;;
+        *"No main class"*) printf 'missing-main' ;;
+        *"Source root not found"*) printf 'missing-source' ;;
+        *"No Java project detected"*) printf 'unknown-project' ;;
+        *) printf 'blocked' ;;
+    esac
+}
+
+emit_environment_event() {
+    local payload
+    payload="{\"projectShape\":\"$(json_escape "$PLAN_SHAPE")\",\"sourceRoot\":\"$(json_escape "$PLAN_SOURCE_ROOT")\",\"tools\":$(tools_event_array_json)}"
+    append_event_json "environment" "Detected $PLAN_SHAPE project environment" "$payload"
+}
+
+emit_plan_event() {
+    local selected_summary="no selected main"
+    [[ -n "$PLAN_SELECTED_MAIN" ]] && selected_summary="$PLAN_SELECTED_MAIN from $PLAN_SELECTED_MAIN_REASON"
+    local payload
+    payload="{\"projectShape\":\"$(json_escape "$PLAN_SHAPE")\",\"sourceRoot\":\"$(json_escape "$PLAN_SOURCE_ROOT")\",\"mainClass\":{\"selected\":\"$(json_escape "$PLAN_SELECTED_MAIN")\",\"source\":\"$(json_escape "$PLAN_SELECTED_MAIN_SOURCE")\",\"candidates\":$(json_array_from_lines "${PLAN_MAIN_CANDIDATES[@]}")},\"build\":{\"kind\":\"$(json_escape "$PLAN_BUILD_KIND")\",\"display\":\"$(json_escape "$PLAN_BUILD_DISPLAY")\"},\"run\":{\"kind\":\"$(json_escape "$PLAN_RUN_KIND")\",\"display\":\"$(json_escape "$PLAN_RUN_DISPLAY")\",\"args\":$(json_array_from_lines "${PLAN_RUN_ARGS[@]}")},\"reasons\":$(json_array_from_lines "${PLAN_REASONS[@]}"),\"warnings\":$(json_array_from_lines "${PLAN_WARNINGS[@]}")}"
+    append_event_json "plan" "Plan selected $selected_summary" "$payload"
+}
+
+emit_blockers_event() {
+    local classification
+    classification="$(event_classification_for_blockers)"
+    local payload
+    payload="{\"blockers\":$(json_array_from_lines "${PLAN_BLOCKERS[@]}"),\"classification\":\"$(json_escape "$classification")\",\"nextAction\":\"$(json_escape "Run jv doctor for details.")\"}"
+    append_event_json "blockers" "Execution blocked: $classification" "$payload"
+}
+
+emit_execution_start_event() {
+    local phase="$1"
+    local kind="$2"
+    local display="$3"
+    local payload
+    payload="{\"phase\":\"$(json_escape "$phase")\",\"step\":{\"kind\":\"$(json_escape "$kind")\",\"display\":\"$(json_escape "$display")\"}}"
+    append_event_json "execution_start" "Starting $phase step" "$payload"
+}
+
+emit_execution_result_event() {
+    local phase="$1"
+    local kind="$2"
+    local display="$3"
+    local status="$4"
+    local exit_code="$5"
+    local classification="$6"
+    local payload
+    payload="{\"phase\":\"$(json_escape "$phase")\",\"status\":\"$(json_escape "$status")\",\"exitCode\":$exit_code,\"classification\":\"$(json_escape "$classification")\",\"step\":{\"kind\":\"$(json_escape "$kind")\",\"display\":\"$(json_escape "$display")\"}}"
+    append_event_json "execution_result" "$phase $status with exit code $exit_code" "$payload"
+}
+
+emit_memory_write_event() {
+    local target="$1"
+    local status="$2"
+    local classification="$3"
+    local payload
+    payload="{\"target\":\"$(json_escape "$target")\",\"status\":\"$(json_escape "$status")\",\"classification\":\"$(json_escape "$classification")\",\"rememberedMainClass\":\"$(json_escape "$PLAN_REMEMBERED_MAIN")\",\"lastSuccessfulMainClass\":\"$(json_escape "$PLAN_SELECTED_MAIN")\",\"lastPlan\":{\"build\":\"$(json_escape "$PLAN_BUILD_DISPLAY")\",\"run\":\"$(json_escape "$PLAN_RUN_DISPLAY")\"}}"
+    append_event_json "memory_write" "Memory write $status for $target" "$payload"
+}
+
 write_state() {
     local shape="$1"
     local main_class="$2"
@@ -189,16 +338,21 @@ append_run_event() {
     local event="$1"
     local detail="$2"
 
-    ensure_jv_dir || return
-    printf '{"event":"%s","detail":"%s"}\n' "$(json_escape "$event")" "$(json_escape "$detail")" >> "$JV_RUNS"
+    append_event_json "execution_result" "$detail" "{\"phase\":\"run\",\"status\":\"success\",\"exitCode\":0,\"classification\":\"legacy-$event\",\"step\":{\"kind\":\"legacy\",\"display\":\"$(json_escape "$detail")\"}}"
 }
 
 write_success_memory_from_plan() {
     if [[ -z "$PLAN_SELECTED_MAIN" || -z "$PLAN_BUILD_DISPLAY" || -z "$PLAN_RUN_DISPLAY" ]]; then
+        emit_memory_write_event "$JV_STATE" "skipped" "missing-plan" || true
         return 1
     fi
-    write_state "$PLAN_SHAPE" "$PLAN_SELECTED_MAIN" "$PLAN_BUILD_DISPLAY" "$PLAN_RUN_DISPLAY" || return 1
-    append_run_event "executed" "$PLAN_RUN_DISPLAY" || return 1
+    if ! write_state "$PLAN_SHAPE" "$PLAN_SELECTED_MAIN" "$PLAN_BUILD_DISPLAY" "$PLAN_RUN_DISPLAY"; then
+        emit_memory_write_event "$JV_STATE" "failure" "memory-unavailable" || true
+        return 1
+    fi
+    if ! emit_memory_write_event "$JV_STATE" "success" "completed"; then
+        return 1
+    fi
 }
 
 remembered_main_class() {
@@ -254,6 +408,9 @@ remember_main() {
 EOF
     fi
 
+    PLAN_REMEMBERED_MAIN="$main_class"
+    PLAN_SELECTED_MAIN="$main_class"
+    emit_memory_write_event "$JV_STATE" "success" "remember-main" || warn "Could not write JV events to $JV_RUNS"
     success "Remembered main class: $main_class"
 }
 
@@ -268,6 +425,9 @@ forget_main() {
         rm -f "$JV_STATE"
     fi
 
+    PLAN_REMEMBERED_MAIN=""
+    PLAN_SELECTED_MAIN=""
+    emit_memory_write_event "$JV_STATE" "success" "forget-main" || warn "Could not write JV events to $JV_RUNS"
     success "Forgot remembered main class"
 }
 
@@ -993,6 +1153,14 @@ print_doctor_report() {
 
 doctor_project() {
     build_plan
+    if ! emit_environment_event || ! emit_plan_event; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
+    if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        if ! emit_blockers_event; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
+    fi
     print_doctor_report
 }
 
@@ -1038,7 +1206,13 @@ run_java() {
     local shape
 
     build_plan "$@"
+    if ! emit_environment_event || ! emit_plan_event; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
     if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        if ! emit_blockers_event; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         print_plan_summary >&2
         return 1
     fi
@@ -1058,14 +1232,26 @@ run_java() {
         local maven_args
         maven_args="$(join_maven_args "${args[@]}")"
 
+        if ! emit_execution_start_event "compile" "maven" "$PLAN_BUILD_DISPLAY"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         set +e
         mvn compile
         local maven_status=$?
         set -e
         if [[ $maven_status -ne 0 ]]; then
+            if ! emit_execution_result_event "compile" "maven" "$PLAN_BUILD_DISPLAY" "failure" "$maven_status" "compile-failure"; then
+                warn "Could not write JV events to $JV_RUNS"
+            fi
             return "$maven_status"
         fi
+        if ! emit_execution_result_event "compile" "maven" "$PLAN_BUILD_DISPLAY" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
 
+        if ! emit_execution_start_event "run" "maven" "$PLAN_RUN_DISPLAY"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         set +e
         if [[ -n "$maven_args" ]]; then
             mvn -q exec:java -Dexec.mainClass="$class_name" -Dexec.args="$maven_args"
@@ -1075,7 +1261,13 @@ run_java() {
         maven_status=$?
         set -e
         if [[ $maven_status -ne 0 ]]; then
+            if ! emit_execution_result_event "run" "maven" "$PLAN_RUN_DISPLAY" "failure" "$maven_status" "runtime-failure"; then
+                warn "Could not write JV events to $JV_RUNS"
+            fi
             return "$maven_status"
+        fi
+        if ! emit_execution_result_event "run" "maven" "$PLAN_RUN_DISPLAY" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
         fi
 
         if ! write_success_memory_from_plan; then
@@ -1110,14 +1302,24 @@ run_java() {
     echo -e ""
     
     # Run the program
+    if ! emit_execution_start_event "run" "java" "$PLAN_RUN_DISPLAY"; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
     set +e
     java -cp "$classpath" "$class_name" "${args[@]}"
     local java_status=$?
     set -e
 
     if [[ $java_status -eq 0 ]]; then
+        if ! emit_execution_result_event "run" "java" "$PLAN_RUN_DISPLAY" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
         if ! write_success_memory_from_plan; then
             warn "Could not write JV memory to $JV_DIR/"
+        fi
+    else
+        if ! emit_execution_result_event "run" "java" "$PLAN_RUN_DISPLAY" "failure" "$java_status" "runtime-failure"; then
+            warn "Could not write JV events to $JV_RUNS"
         fi
     fi
 
@@ -1148,6 +1350,7 @@ clean_project() {
 main() {
     local command="${1:-help}"
     shift || true
+    event_init "$command" "$@"
     
     case "$command" in
         create)

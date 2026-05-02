@@ -55,6 +55,43 @@ assert_status() {
     fi
 }
 
+assert_jsonl_valid_if_jq() {
+    local file="$1"
+    if command -v jq >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            printf '%s\n' "$line" | jq -e . >/dev/null
+        done < "$file"
+    fi
+}
+
+assert_jsonl_contains_event_type() {
+    local file="$1"
+    local event_type="$2"
+    local line
+    if command -v jq >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if printf '%s\n' "$line" | jq -e --arg event_type "$event_type" '.schemaVersion == 1 and .eventType == $event_type' >/dev/null 2>&1; then
+                return 0
+            fi
+        done < "$file"
+        fail "Expected $file to contain schema v1 event type: $event_type"
+    else
+        assert_contains "$(cat "$file")" "\"eventType\":\"$event_type\""
+    fi
+}
+
+assert_jsonl_event_count_at_least() {
+    local file="$1"
+    local minimum="$2"
+    local count
+    count="$(wc -l < "$file" | xargs)"
+    if [[ "$count" -lt "$minimum" ]]; then
+        fail "Expected at least $minimum JSONL events in $file, got $count"
+    fi
+}
+
 setup_tmp() {
     cleanup_tmp
     TMP_ROOT="$(mktemp -d)"
@@ -175,6 +212,44 @@ JAVA
     assert_contains "$output" "com.example.App"
     assert_contains "$output" "com.example.Tool"
     assert_contains "$output" "jv run <MainClass>"
+}
+
+test_run_writes_blocker_event_without_execution_start() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    set +e
+    "$JV" run >"$TMP_ROOT/blocker-run.out" 2>&1
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected ambiguous run to fail"
+    fi
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "environment"
+    assert_jsonl_contains_event_type "$events" "plan"
+    assert_jsonl_contains_event_type "$events" "blockers"
+    assert_contains "$(cat "$events")" '"classification":"ambiguous-main"'
+    assert_not_contains "$(cat "$events")" '"eventType":"execution_start"'
 }
 
 test_run_refuses_multiple_plain_main_classes_with_non_candidate_token() {
@@ -444,7 +519,8 @@ JAVA
     [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"projectShape": "plain-java"'
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"lastSuccessfulMainClass": "Main"'
-    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"event":"executed"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"memory_write"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"classification":"completed"'
 }
 
 test_run_writes_plain_args_to_jv_memory() {
@@ -464,7 +540,59 @@ JAVA
     [[ -f "$TMP_ROOT/app/.jv/state.json" ]] || fail "Expected .jv/state.json"
     [[ -f "$TMP_ROOT/app/.jv/runs.jsonl" ]] || fail "Expected .jv/runs.jsonl"
     assert_contains "$(cat "$TMP_ROOT/app/.jv/state.json")" '"run": "java -cp bin Main one two"'
-    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"detail":"java -cp bin Main one two"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"memory_write"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"run":"java -cp bin Main one two"'
+}
+
+test_run_writes_agent_grade_event_schema() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("agent events");
+    }
+}
+JAVA
+
+    "$JV" run Main alpha >"$TMP_ROOT/events-run.out"
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_event_count_at_least "$events" 5
+    assert_jsonl_contains_event_type "$events" "environment"
+    assert_jsonl_contains_event_type "$events" "plan"
+    assert_jsonl_contains_event_type "$events" "execution_start"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_jsonl_contains_event_type "$events" "memory_write"
+    assert_contains "$(cat "$events")" '"schemaVersion":1'
+    assert_contains "$(cat "$events")" '"runId":"run_'
+    assert_contains "$(cat "$events")" '"command":{"name":"run","argv":["jv","run","Main","alpha"]}'
+    assert_contains "$(cat "$events")" '"summary":"Plan selected Main from explicit main class argument"'
+}
+
+test_run_appends_v1_events_after_legacy_and_corrupt_lines() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("legacy compatible");
+    }
+}
+JAVA
+    printf '%s\n' '{"event":"executed","detail":"java -cp bin OldMain"}' '{bad json' > .jv/runs.jsonl
+
+    "$JV" run >"$TMP_ROOT/legacy-events.out"
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_contains "$(sed -n '1p' "$events")" '"event":"executed"'
+    assert_contains "$(sed -n '2p' "$events")" '{bad json'
+    assert_jsonl_contains_event_type "$events" "plan"
+    assert_jsonl_contains_event_type "$events" "memory_write"
 }
 
 test_run_state_contains_planner_reasons() {
@@ -585,6 +713,35 @@ JAVA
         fail "Expected Java exit status 7; got $status"
     fi
     assert_contains "$(cat "$TMP_ROOT/jv-test-failing-run.out")" "failing main"
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
+test_run_failure_writes_execution_result_event_without_success_memory() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("event failure");
+        System.exit(7);
+    }
+}
+JAVA
+
+    set +e
+    "$JV" run >"$TMP_ROOT/failure-events.out" 2>&1
+    local status=$?
+    set -e
+
+    assert_status "$status" 7
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_contains "$(cat "$events")" '"status":"failure"'
+    assert_contains "$(cat "$events")" '"exitCode":7'
+    assert_contains "$(cat "$events")" '"classification":"runtime-failure"'
     assert_not_exists "$TMP_ROOT/app/.jv/state.json"
 }
 
@@ -1131,6 +1288,7 @@ main() {
     test_run_infers_single_plain_main_class
     test_run_infers_single_plain_main_class_with_args
     test_run_refuses_multiple_plain_main_classes
+    test_run_writes_blocker_event_without_execution_start
     test_run_refuses_multiple_plain_main_classes_with_non_candidate_token
     test_run_ignores_commented_plain_main_signatures
     test_run_ignores_block_commented_plain_main_signatures
@@ -1147,11 +1305,14 @@ main() {
     test_run_and_explain_share_plain_plan_output
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
+    test_run_writes_agent_grade_event_schema
+    test_run_appends_v1_events_after_legacy_and_corrupt_lines
     test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
     test_run_escapes_control_characters_in_memory_json
     test_run_failure_does_not_write_success_memory
+    test_run_failure_writes_execution_result_event_without_success_memory
     test_remember_main_resolves_ambiguity
     test_remember_main_rejects_stale_source_memory
     test_run_with_args_ignores_remembered_main_when_ambiguous
