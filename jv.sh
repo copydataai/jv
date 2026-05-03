@@ -1495,6 +1495,71 @@ history_render_text_rows() {
     done
 }
 
+history_json_value() {
+    local value="$1"
+    if [[ -z "$value" || "$value" == "-" ]]; then
+        printf 'null'
+    else
+        printf '"%s"' "$(json_escape "$value")"
+    fi
+}
+
+history_render_json_rows() {
+    local limit="$1"
+    local failures_only="$2"
+    local corrupt_count="$3"
+    shift 3
+    local rows=("$@")
+    local row
+    local first=1
+    local status event_type timestamp run_id event_id main_class command_text summary reason
+
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    printf '  "limit": %s,\n' "$limit"
+    if [[ $failures_only -eq 1 ]]; then
+        echo '  "failuresOnly": true,'
+    else
+        echo '  "failuresOnly": false,'
+    fi
+    echo '  "records": ['
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r status event_type timestamp run_id event_id main_class command_text summary reason <<<"$row"
+        if [[ $first -eq 0 ]]; then
+            echo ","
+        fi
+        echo "    {"
+        printf '      "status": %s,\n' "$(history_json_value "$status")"
+        printf '      "eventType": %s,\n' "$(history_json_value "$event_type")"
+        printf '      "timestamp": %s,\n' "$(history_json_value "$timestamp")"
+        printf '      "runId": %s,\n' "$(history_json_value "$run_id")"
+        printf '      "eventId": %s,\n' "$(history_json_value "$event_id")"
+        printf '      "mainClass": %s,\n' "$(history_json_value "$main_class")"
+        printf '      "command": %s,\n' "$(history_json_value "$command_text")"
+        printf '      "summary": %s,\n' "$(history_json_value "$summary")"
+        printf '      "reason": %s\n' "$(history_json_value "$reason")"
+        printf '    }'
+        first=0
+    done
+    echo ""
+    echo '  ],'
+    echo '  "warnings": ['
+    if [[ $corrupt_count -gt 0 ]]; then
+        echo "    {"
+        echo '      "type": "corrupt-line",'
+        printf '      "count": %s,\n' "$corrupt_count"
+        if [[ $corrupt_count -eq 1 ]]; then
+            printf '      "message": "Skipped 1 corrupt %s line"\n' "$(json_escape "$JV_RUNS")"
+        else
+            printf '      "message": "Skipped %s corrupt %s lines"\n' "$corrupt_count" "$(json_escape "$JV_RUNS")"
+        fi
+        echo "    }"
+    fi
+    echo '  ]'
+    echo "}"
+}
+
 show_history() {
     local limit=10
     local failures_only=0
@@ -1533,6 +1598,10 @@ show_history() {
     fi
 
     if [[ ! -e "$JV_RUNS" ]]; then
+        if [[ $json_mode -eq 1 ]]; then
+            history_render_json_rows "$limit" "$failures_only" 0
+            return 0
+        fi
         echo "JV history"
         echo "Source: $JV_RUNS"
         echo ""
@@ -1576,6 +1645,11 @@ show_history() {
 
     if [[ ${#rows[@]} -gt "$limit" ]]; then
         rows=("${rows[@]:0:$limit}")
+    fi
+
+    if [[ $json_mode -eq 1 ]]; then
+        history_render_json_rows "$limit" "$failures_only" "$corrupt_count" "${rows[@]}"
+        return 0
     fi
 
     empty_message="No JV history entries found in $JV_RUNS."

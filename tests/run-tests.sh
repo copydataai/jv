@@ -882,6 +882,28 @@ JSONL
     assert_contains "$output" "Warning: skipped 1 corrupt .jv/runs.jsonl line"
 }
 
+test_history_json_outputs_normalized_records() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main one two"}
+JSONL
+
+    local output
+    output="$("$JV" history --json)"
+
+    assert_contains "$output" '"schemaVersion": 1'
+    assert_contains "$output" '"source": ".jv/runs.jsonl"'
+    assert_contains "$output" '"failuresOnly": false'
+    assert_contains "$output" '"status": "success"'
+    assert_contains "$output" '"mainClass": "Main"'
+    assert_contains "$output" '"command": "java -cp bin Main one two"'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.records[0].status == "success"' >/dev/null
+    fi
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1662,6 +1684,7 @@ main() {
     test_history_rejects_invalid_limit
     test_history_renders_mixed_legacy_and_future_events
     test_history_skips_corrupt_jsonl_lines
+    test_history_json_outputs_normalized_records
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
