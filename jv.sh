@@ -630,7 +630,7 @@ show_help() {
     echo -e "  ${GREEN}create${NC} <project-name> [package]  Create a new Java project (mkdir + init)"
     echo -e "  ${GREEN}init${NC}                          Initialize project in current directory"
     echo -e "  ${GREEN}explain${NC} [ClassName]           Show the detected build/run plan without running"
-    echo -e "  ${GREEN}doctor${NC}                       Inspect Java project state and possible entrypoints"
+    echo -e "  ${GREEN}doctor${NC} [--json]              Inspect Java project state and possible entrypoints"
     echo -e "  ${GREEN}history${NC} [--limit N] [--failures] [--json]  Show recent JV run history"
     echo -e "  ${GREEN}events${NC} [--limit N] [--failures] [--json]   Alias for history"
     echo -e "  ${GREEN}retry${NC} [--dry-run] [--json]     Retry the latest failed or blocked JV run"
@@ -1313,7 +1313,131 @@ print_doctor_report() {
     fi
 }
 
+json_nullable_string() {
+    local value="$1"
+    if [[ -z "$value" ]]; then
+        printf 'null'
+    else
+        printf '"%s"' "$(json_escape "$value")"
+    fi
+}
+
+plan_status_json_value() {
+    if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        printf 'blocked'
+    elif [[ ${#PLAN_WARNINGS[@]} -gt 0 ]]; then
+        printf 'warn'
+    else
+        printf 'ok'
+    fi
+}
+
+source_roots_json() {
+    if [[ -z "$PLAN_SOURCE_ROOT" ]]; then
+        printf '[]'
+        return 0
+    fi
+
+    printf '[{"path":"%s","exists":%s,"role":"%s","reason":"%s"}]' \
+        "$(json_escape "$PLAN_SOURCE_ROOT")" \
+        "$(json_bool "$([[ -d "$PLAN_SOURCE_ROOT" ]] && printf true || printf false)")" \
+        "$(json_escape "$PLAN_SHAPE-source")" \
+        "$(json_escape "$PLAN_SOURCE_ROOT_REASON")"
+}
+
+tool_json_for_doctor() {
+    local tool="$1"
+    local required="false"
+    local available="false"
+    local path=""
+    local version=""
+
+    if tool_is_required "$tool"; then
+        required="true"
+    fi
+    if command -v "$tool" >/dev/null 2>&1; then
+        available="true"
+        path="$(command -v "$tool")"
+        version="$(tool_version "$tool")"
+    fi
+
+    printf '{"name":"%s","required":%s,"available":%s,"path":%s,"version":%s}' \
+        "$(json_escape "$tool")" \
+        "$(json_bool "$required")" \
+        "$(json_bool "$available")" \
+        "$(json_nullable_string "$path")" \
+        "$(json_nullable_string "$version")"
+}
+
+tools_json_for_doctor() {
+    printf '[%s,%s,%s]' "$(tool_json_for_doctor java)" "$(tool_json_for_doctor javac)" "$(tool_json_for_doctor mvn)"
+}
+
+doctor_next_action_json() {
+    if [[ ${#PLAN_BLOCKERS[@]} -eq 0 ]]; then
+        printf 'null'
+        return 0
+    fi
+
+    local reason
+    local retry
+    reason="$(failure_reason_for_blocker "${PLAN_BLOCKERS[0]}")"
+    retry="$(retry_command_for_current_run "${PLAN_RUN_ARGS[@]}")"
+    printf '"%s"' "$(json_escape "$(next_action_for_reason "$reason" "$retry")")"
+}
+
+print_doctor_json_report() {
+    local status
+    status="$(plan_status_json_value)"
+
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "command": %s,\n' "$(event_command_json)"
+    printf '  "cwd": "%s",\n' "$(json_escape "$PWD")"
+    printf '  "status": "%s",\n' "$(json_escape "$status")"
+    echo '  "project": {'
+    printf '    "shape": "%s",\n' "$(json_escape "$PLAN_SHAPE")"
+    printf '    "shapeReason": %s,\n' "$(json_nullable_string "$PLAN_SHAPE_REASON")"
+    printf '    "sourceRoots": %s\n' "$(source_roots_json)"
+    echo '  },'
+    printf '  "tools": %s,\n' "$(tools_json_for_doctor)"
+    echo '  "main": {'
+    printf '    "selected": %s,\n' "$(json_nullable_string "$PLAN_SELECTED_MAIN")"
+    printf '    "selectedSource": %s,\n' "$(json_nullable_string "$PLAN_SELECTED_MAIN_SOURCE")"
+    printf '    "selectedReason": %s,\n' "$(json_nullable_string "$PLAN_SELECTED_MAIN_REASON")"
+    printf '    "candidates": %s\n' "$(json_array_from_lines "${PLAN_MAIN_CANDIDATES[@]}")"
+    echo '  },'
+    echo '  "plan": {'
+    echo '    "build": {'
+    printf '      "kind": %s,\n' "$(json_nullable_string "$PLAN_BUILD_KIND")"
+    printf '      "display": %s,\n' "$(json_nullable_string "$PLAN_BUILD_DISPLAY")"
+    printf '      "runnable": %s\n' "$(json_bool "$([[ -n "$PLAN_BUILD_DISPLAY" && ${#PLAN_BLOCKERS[@]} -eq 0 ]] && printf true || printf false)")"
+    echo '    },'
+    echo '    "run": {'
+    printf '      "kind": %s,\n' "$(json_nullable_string "$PLAN_RUN_KIND")"
+    printf '      "display": %s,\n' "$(json_nullable_string "$PLAN_RUN_DISPLAY")"
+    printf '      "args": %s,\n' "$(json_array_from_lines "${PLAN_RUN_ARGS[@]}")"
+    printf '      "runnable": %s\n' "$(json_bool "$([[ -n "$PLAN_RUN_DISPLAY" && ${#PLAN_BLOCKERS[@]} -eq 0 ]] && printf true || printf false)")"
+    echo '    }'
+    echo '  },'
+    echo '  "memory": {'
+    printf '    "state": "%s",\n' "$(json_escape "$PLAN_MEMORY_STATE")"
+    printf '    "statePath": "%s",\n' "$(json_escape "$JV_STATE")"
+    printf '    "runsPath": "%s",\n' "$(json_escape "$JV_RUNS")"
+    printf '    "rememberedMainClass": %s,\n' "$(json_nullable_string "$PLAN_REMEMBERED_MAIN")"
+    printf '    "lastSuccessfulMainClass": %s,\n' "$(json_nullable_string "$PLAN_LAST_SUCCESSFUL_MAIN")"
+    printf '    "lastRun": %s\n' "$(json_nullable_string "$PLAN_LAST_RUN_SUMMARY")"
+    echo '  },'
+    printf '  "reasons": %s,\n' "$(json_array_from_lines "${PLAN_REASONS[@]}")"
+    printf '  "warnings": %s,\n' "$(json_array_from_lines "${PLAN_WARNINGS[@]}")"
+    printf '  "blockers": %s,\n' "$(json_array_from_lines "${PLAN_BLOCKERS[@]}")"
+    printf '  "nextAction": %s\n' "$(doctor_next_action_json)"
+    echo "}"
+}
+
 doctor_project() {
+    local json_mode="${1:-0}"
+
     build_plan
     if ! emit_environment_event || ! emit_plan_event; then
         warn "Could not write JV events to $JV_RUNS"
@@ -1322,6 +1446,10 @@ doctor_project() {
         if ! emit_blockers_event; then
             warn "Could not write JV events to $JV_RUNS"
         fi
+    fi
+    if [[ "$json_mode" -eq 1 ]]; then
+        print_doctor_json_report
+        return 0
     fi
     print_doctor_report
 }
@@ -2102,10 +2230,13 @@ main() {
             explain_project "$@"
             ;;
         doctor)
-            if [[ $# -ne 0 ]]; then
-                error "Usage: jv doctor"
+            if [[ $# -eq 0 ]]; then
+                doctor_project 0
+            elif [[ $# -eq 1 && "${1:-}" == "--json" ]]; then
+                doctor_project 1
+            else
+                error "Usage: jv doctor [--json]"
             fi
-            doctor_project
             ;;
         history)
             show_history "$@"

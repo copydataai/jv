@@ -1711,12 +1711,103 @@ test_doctor_reports_unknown_project_as_blocker() {
     assert_contains "$output" "No Java project detected"
 }
 
+test_doctor_json_reports_plain_project() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("doctor json");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" doctor --json)"
+
+    assert_contains "$output" '"schemaVersion": 1'
+    assert_contains "$output" '"status": "ok"'
+    assert_contains "$output" '"shape": "plain-java"'
+    assert_contains "$output" '"selected": "Main"'
+    assert_contains "$output" '"blockers": []'
+    assert_not_exists "$TMP_ROOT/app/bin"
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.status == "ok" and .main.selected == "Main"' >/dev/null
+    fi
+}
+
+test_doctor_json_reports_ambiguous_project() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {}
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {}
+}
+JAVA
+
+    local output
+    local status
+    set +e
+    output="$("$JV" doctor --json)"
+    status=$?
+    set -e
+
+    assert_status "$status" 0
+    assert_contains "$output" '"status": "blocked"'
+    assert_contains "$output" '"App"'
+    assert_contains "$output" '"Tool"'
+    assert_contains "$output" 'Multiple main classes found'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.status == "blocked" and (.main.candidates | length) == 2' >/dev/null
+    fi
+}
+
+test_doctor_json_reports_unknown_project() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    output="$("$JV" doctor --json)"
+
+    assert_contains "$output" '"status": "blocked"'
+    assert_contains "$output" '"shape": "unknown"'
+    assert_contains "$output" 'No Java project detected'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.status == "blocked" and .project.shape == "unknown"' >/dev/null
+    fi
+}
+
+test_doctor_json_rejects_extra_args() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    local status
+    set +e
+    output="$("$JV" doctor --json extra 2>&1)"
+    status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_contains "$output" "Usage: jv doctor [--json]"
+}
+
 test_help_lists_diagnostics_commands() {
     local output
     output="$("$JV" help)"
 
     assert_contains "$output" "explain [ClassName]           Show the detected build/run plan without running"
-    assert_contains "$output" "doctor                       Inspect Java project state and possible entrypoints"
+    assert_contains "$output" "doctor [--json]              Inspect Java project state and possible entrypoints"
     assert_contains "$output" "history [--limit N] [--failures] [--json]  Show recent JV run history"
     assert_contains "$output" "events [--limit N] [--failures] [--json]   Alias for history"
     assert_contains "$output" "retry [--dry-run] [--json]     Retry the latest failed or blocked JV run"
@@ -1892,6 +1983,10 @@ main() {
     test_doctor_rejects_extra_args
     test_doctor_reports_ambiguous_main_as_blocker
     test_doctor_reports_unknown_project_as_blocker
+    test_doctor_json_reports_plain_project
+    test_doctor_json_reports_ambiguous_project
+    test_doctor_json_reports_unknown_project
+    test_doctor_json_rejects_extra_args
     test_help_lists_diagnostics_commands
     echo "All tests passed"
 }

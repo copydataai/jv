@@ -94,7 +94,7 @@ jv clean
 | `jv compile [ClassName]` | Compile all or specific Java files |
 | `jv run [ClassName] [args...]` | Infer, explain, compile, and run the latest code |
 | `jv explain [ClassName]` | Show the detected build/run plan without running |
-| `jv doctor` | Inspect Java project state and possible entrypoints |
+| `jv doctor [--json]` | Inspect Java project state and possible entrypoints |
 | `jv history [--limit N] [--failures] [--json]` | Show recent JV run history |
 | `jv events [--limit N] [--failures] [--json]` | Alias for `jv history` |
 | `jv retry [--dry-run] [--json]` | Retry the latest failed or blocked JV run |
@@ -108,6 +108,8 @@ jv clean
 ### Inspect The Plan
 
 `jv doctor` shows the same planner model that powers `jv run` and `jv explain`: project shape, source roots, tool availability, selected main class, reasons, warnings, blockers, and `.jv/` memory status.
+
+Use `jv doctor --json` for the same project health model as machine-readable JSON.
 
 ---
 

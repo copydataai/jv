@@ -13,9 +13,10 @@ jv run
 
 ```bash
 jv doctor
+jv doctor --json
 ```
 
-Use `jv doctor` when JV surprises you. It prints what JV detected, why it selected a main class, which command it would run, and what blocks execution.
+Use `jv doctor` when JV surprises you. It prints what JV detected, why it selected a main class, which command it would run, and what blocks execution. Use `jv doctor --json` when agents or scripts need the same project model as structured data.
 
 ## Inspect Recent JV Activity
 
