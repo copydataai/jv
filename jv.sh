@@ -1457,7 +1457,8 @@ run_java() {
         fi
 
         if ! write_success_memory_from_plan; then
-            warn "Could not write JV memory to $JV_DIR/"
+            print_warning_block "memory_write_failed" >&2
+            append_warning_event "memory_write_failed" "$(retry_command_for_current_run "$@")" || true
         fi
         return 0
     fi
@@ -1501,13 +1502,19 @@ run_java() {
             warn "Could not write JV events to $JV_RUNS"
         fi
         if ! write_success_memory_from_plan; then
-            warn "Could not write JV memory to $JV_DIR/"
+            print_warning_block "memory_write_failed" >&2
+            append_warning_event "memory_write_failed" "$(retry_command_for_current_run "$@")" || true
         fi
-    else
-        if ! emit_execution_result_event "run" "java" "$PLAN_RUN_DISPLAY" "failure" "$java_status" "runtime-failure"; then
-            warn "Could not write JV events to $JV_RUNS"
-        fi
+        return 0
     fi
+
+    if ! emit_execution_result_event "run" "java" "$PLAN_RUN_DISPLAY" "failure" "$java_status" "runtime-failure"; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
+    local retry
+    retry="$(retry_command_for_current_run "$@")"
+    print_failure_block "runtime_failed" "runtime" "$retry" "$java_status" >&2
+    append_failure_event "failed" "runtime" "runtime_failed" "$PLAN_RUN_DISPLAY" "$retry" "$java_status" || true
 
     return "$java_status"
 }

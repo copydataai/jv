@@ -698,7 +698,9 @@ JAVA
         fail "Expected successful Java run to preserve exit 0 when memory write fails; got $status"
     fi
     assert_contains "$output" "memory unavailable"
-    assert_contains "$output" "Warning:"
+    assert_warning_block "$output" "memory_write_failed"
+    assert_contains "$output" "Message: Could not write JV memory to .jv/."
+    assert_contains "$output" "Next action: Check that .jv/ is a writable directory."
 }
 
 test_run_state_write_failure_warns_even_when_run_log_can_append() {
@@ -723,7 +725,9 @@ JAVA
         fail "Expected successful Java run to preserve exit 0 when state write fails; got $status"
     fi
     assert_contains "$output" "partial memory"
-    assert_contains "$output" "Warning: Could not write JV memory"
+    assert_warning_block "$output" "memory_write_failed"
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"warning"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"memory_write_failed"'
 }
 
 test_run_escapes_control_characters_in_memory_json() {
@@ -792,14 +796,17 @@ public class Main {
 JAVA
 
     set +e
-    "$JV" run >"$TMP_ROOT/jv-test-failing-run.out" 2>&1
+    local output
+    output="$("$JV" run Main alpha 2>&1)"
     local status=$?
     set -e
 
-    if [[ $status -ne 7 ]]; then
-        fail "Expected Java exit status 7; got $status"
-    fi
-    assert_contains "$(cat "$TMP_ROOT/jv-test-failing-run.out")" "failing main"
+    assert_status "$status" 7
+    assert_contains "$output" "failing main"
+    assert_failure_block "$output" "runtime_failed" "runtime" "jv run Main alpha"
+    assert_contains "$output" "Message: Java exited with a non-zero status while running Main."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"failure"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"runtime_failed"'
     assert_not_exists "$TMP_ROOT/app/.jv/state.json"
 }
 
