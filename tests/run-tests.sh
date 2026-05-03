@@ -730,6 +730,49 @@ JAVA
     assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"memory_write_failed"'
 }
 
+test_history_renders_legacy_run_log() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main one two"}
+JSONL
+    cat > .jv/state.json <<'JSON'
+{
+  "schemaVersion": 1,
+  "projectShape": "plain-java",
+  "lastSuccessfulMainClass": "Main",
+  "lastPlan": {
+    "build": "javac -d bin -cp bin <sources>",
+    "run": "java -cp bin Main one two"
+  }
+}
+JSON
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "JV history"
+    assert_contains "$output" "Source: .jv/runs.jsonl"
+    assert_contains "$output" "1. success  Main  java -cp bin Main one two"
+}
+
+test_events_alias_matches_history_for_legacy_run_log() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+JSONL
+
+    local history_output
+    local events_output
+    history_output="$("$JV" history)"
+    events_output="$("$JV" events)"
+
+    [[ "$history_output" == "$events_output" ]] || fail "Expected jv events to match jv history"
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1501,6 +1544,8 @@ main() {
     test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
+    test_history_renders_legacy_run_log
+    test_events_alias_matches_history_for_legacy_run_log
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory

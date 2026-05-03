@@ -630,6 +630,8 @@ show_help() {
     echo -e "  ${GREEN}init${NC}                          Initialize project in current directory"
     echo -e "  ${GREEN}explain${NC} [ClassName]           Show the detected build/run plan without running"
     echo -e "  ${GREEN}doctor${NC}                       Inspect Java project state and possible entrypoints"
+    echo -e "  ${GREEN}history${NC} [--limit N] [--failures] [--json]  Show recent JV run history"
+    echo -e "  ${GREEN}events${NC} [--limit N] [--failures] [--json]   Alias for history"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} [ClassName] [args...]     Infer, explain, compile, and run"
     echo -e "  ${GREEN}remember${NC} main <ClassName>      Remember a preferred main class in .jv/"
@@ -645,6 +647,7 @@ show_help() {
     echo -e "  jv run                                # Infer, explain, compile, and run"
     echo -e "  jv explain                            # Show what JV would do"
     echo -e "  jv doctor                             # Inspect detected project state"
+    echo -e "  jv history                            # Show recent JV runs"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
     echo -e "  jv run ie.atu.sw.Main arg1 arg2      # Run with arguments"
@@ -1320,6 +1323,145 @@ doctor_project() {
     print_doctor_report
 }
 
+history_extract_json_string() {
+    local key="$1"
+    local line="$2"
+    sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" <<<"$line" | head -n 1
+}
+
+history_main_from_command() {
+    local command_text="$1"
+    local token
+    local previous=""
+    local after_classpath=0
+
+    for token in $command_text; do
+        if [[ "$previous" == "-cp" || "$previous" == "-classpath" ]]; then
+            after_classpath=1
+            previous="$token"
+            continue
+        fi
+        if [[ $after_classpath -eq 1 ]]; then
+            printf '%s\n' "$token"
+            return 0
+        fi
+        case "$token" in
+            -Dexec.mainClass=*)
+                printf '%s\n' "${token#-Dexec.mainClass=}"
+                return 0
+                ;;
+        esac
+        previous="$token"
+    done
+}
+
+history_normalize_legacy_line() {
+    local line="$1"
+    local event
+    local detail
+    local main_class
+
+    event="$(history_extract_json_string "event" "$line")"
+    detail="$(history_extract_json_string "detail" "$line")"
+
+    if [[ "$event" != "executed" || -z "$detail" ]]; then
+        return 1
+    fi
+
+    main_class="$(history_main_from_command "$detail")"
+    printf 'success\tresult\t-\t-\t-\t%s\t%s\tExecuted %s\t-\n' "$main_class" "$detail" "$detail"
+}
+
+history_render_text_rows() {
+    local rows=("$@")
+    local row
+    local index=1
+    local status event_type timestamp run_id event_id main_class command_text summary reason
+    : "$event_type" "$timestamp" "$run_id" "$event_id" "$summary"
+
+    echo "JV history"
+    echo "Source: $JV_RUNS"
+    echo ""
+
+    if [[ ${#rows[@]} -eq 0 ]]; then
+        echo "No JV history entries found in $JV_RUNS."
+        return 0
+    fi
+
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r status event_type timestamp run_id event_id main_class command_text summary reason <<<"$row"
+        : "$timestamp" "$run_id" "$event_id" "$summary"
+        [[ -n "$main_class" && "$main_class" != "-" ]] || main_class="-"
+        [[ -n "$command_text" && "$command_text" != "-" ]] || command_text="-"
+        printf '%d. %s  %s  %s\n' "$index" "$status" "$main_class" "$command_text"
+        if [[ -n "$reason" && "$reason" != "-" ]]; then
+            printf '   Reason: %s\n' "$reason"
+        fi
+        index=$((index + 1))
+    done
+}
+
+show_history() {
+    local limit=10
+    local failures_only=0
+    local json_mode=0
+    local arg
+    local rows=()
+    local line
+    local normalized
+
+    while [[ $# -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+            --limit)
+                shift
+                limit="${1:-}"
+                ;;
+            --failures)
+                failures_only=1
+                ;;
+            --json)
+                json_mode=1
+                ;;
+            *)
+                error "Unknown history option: $arg"
+                ;;
+        esac
+        shift || true
+    done
+
+    : "$failures_only" "$json_mode"
+
+    if [[ ! "$limit" =~ ^[1-9][0-9]*$ ]]; then
+        error "--limit must be a positive integer"
+    fi
+
+    if [[ ! -e "$JV_RUNS" ]]; then
+        echo "JV history"
+        echo "Source: $JV_RUNS"
+        echo ""
+        echo "No JV history found. Run \`jv run\` to create $JV_RUNS."
+        return 0
+    fi
+
+    if [[ ! -r "$JV_RUNS" ]]; then
+        error "Cannot read $JV_RUNS"
+    fi
+
+    while IFS= read -r line; do
+        normalized="$(history_normalize_legacy_line "$line" || true)"
+        if [[ -n "$normalized" ]]; then
+            rows=("$normalized" "${rows[@]}")
+        fi
+    done < "$JV_RUNS"
+
+    if [[ ${#rows[@]} -gt "$limit" ]]; then
+        rows=("${rows[@]:0:$limit}")
+    fi
+
+    history_render_text_rows "${rows[@]}"
+}
+
 # Compile Java files
 compile_java() {
     check_java
@@ -1560,6 +1702,12 @@ main() {
                 error "Usage: jv doctor"
             fi
             doctor_project
+            ;;
+        history)
+            show_history "$@"
+            ;;
+        events)
+            show_history "$@"
             ;;
         compile)
             compile_java "$@"
