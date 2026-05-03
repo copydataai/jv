@@ -773,6 +773,31 @@ JSONL
     [[ "$history_output" == "$events_output" ]] || fail "Expected jv events to match jv history"
 }
 
+test_history_missing_jv_is_empty_state_and_side_effect_free() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "No JV history found"
+    assert_not_exists "$TMP_ROOT/app/.jv"
+    assert_not_exists "$TMP_ROOT/app/bin"
+}
+
+test_history_empty_runs_log_is_empty_state() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    : > .jv/runs.jsonl
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "No JV history entries found in .jv/runs.jsonl."
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1546,6 +1571,8 @@ main() {
     test_run_state_write_failure_warns_even_when_run_log_can_append
     test_history_renders_legacy_run_log
     test_events_alias_matches_history_for_legacy_run_log
+    test_history_missing_jv_is_empty_state_and_side_effect_free
+    test_history_empty_runs_log_is_empty_state
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
