@@ -4,6 +4,7 @@ set -eo pipefail
 
 # JV - Simple Java Wrapper for Daily Tasks
 # Version: 0.1.0
+JV_VERSION="0.1.0"
 
 # Initialize colors as empty
 RED=''
@@ -671,8 +672,12 @@ show_help() {
 
 # Show version
 show_version() {
-    echo -e "jv version 0.1.0"
-    java -version 2>&1 | head -n 1
+    echo -e "jv $JV_VERSION (bash)"
+    if command -v java >/dev/null 2>&1; then
+        java -version 2>&1 | head -n 1
+    else
+        warn "Java is not installed"
+    fi
 }
 
 # Initialize project structure
@@ -2457,7 +2462,7 @@ main() {
         clean)
             clean_project
             ;;
-        version)
+        version|--version|-v)
             show_version
             ;;
         help|--help|-h)

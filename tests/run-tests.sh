@@ -1886,6 +1886,34 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "jv watch                              # Re-run on Java source changes"
 }
 
+test_version_prints_cli_version() {
+    local output
+    output="$("$JV" version)"
+
+    assert_contains "$output" "jv 0.1.0 (bash)"
+}
+
+test_dash_dash_version_matches_version() {
+    local version_output
+    local flag_output
+
+    version_output="$("$JV" version)"
+    flag_output="$("$JV" --version)"
+
+    [[ "$version_output" == "$flag_output" ]] || fail "Expected --version to match version"
+}
+
+test_install_script_installs_to_custom_dir() {
+    setup_tmp
+    cd "$ROOT_DIR"
+
+    JV_INSTALL_DIR="$TMP_ROOT/bin" bash "$ROOT_DIR/install.sh" >"$TMP_ROOT/install.out"
+
+    assert_exists "$TMP_ROOT/bin/jv"
+    [[ -x "$TMP_ROOT/bin/jv" ]] || fail "Expected installed jv to be executable"
+    assert_contains "$("$TMP_ROOT/bin/jv" version)" "jv 0.1.0 (bash)"
+}
+
 test_explain_shows_reasons_and_no_side_effects() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -2052,6 +2080,9 @@ main() {
     test_doctor_json_rejects_extra_args
     test_watch_reruns_when_java_source_changes
     test_help_lists_diagnostics_commands
+    test_version_prints_cli_version
+    test_dash_dash_version_matches_version
+    test_install_script_installs_to_custom_dir
     echo "All tests passed"
 }
 

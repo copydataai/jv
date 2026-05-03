@@ -19,6 +19,7 @@ Thank you for your interest in contributing to JV! This document provides guidel
    ```bash
    ./jv.sh help
    ./jv.sh create test-project
+   tests/run-tests.sh
    ```
 
 ## How to Contribute
@@ -53,12 +54,9 @@ Thank you for your interest in contributing to JV! This document provides guidel
 
 4. **Test thoroughly**
    ```bash
-   # Test all commands
-   ./jv.sh create test-proj
-   cd test-proj
-   ../jv.sh compile
-   ../jv.sh run Main
-   ../jv.sh clean
+   tests/run-tests.sh
+   bash -n jv.sh tests/run-tests.sh install.sh
+   shellcheck jv.sh tests/run-tests.sh install.sh
    ```
 
 5. **Commit with clear messages**
@@ -93,6 +91,14 @@ Before submitting a PR, test these scenarios:
 - [ ] Error messages are clear and helpful
 - [ ] Works on macOS (if you can test)
 - [ ] Works on Linux (if you can test)
+
+## Release Checklist
+
+1. Update `JV_VERSION` in `jv.sh`.
+2. Update `CHANGELOG.md`.
+3. Run `tests/run-tests.sh`.
+4. Run `scripts/release.sh <version>` from a clean working tree.
+5. Publish the archive and update packaging metadata with real SHA-256 values.
 
 ## Project Philosophy
 
