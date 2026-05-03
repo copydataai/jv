@@ -27,6 +27,16 @@ jv history --json
 
 Use `jv history` to see recent runs from generated `.jv/` memory. `--failures` narrows the view to blocked or failed runs, and `--json` prints normalized records for agents and scripts.
 
+## Retry The Last Failure
+
+```bash
+jv run
+# fix the compiler error or blocked project state
+jv retry
+```
+
+Use `jv retry --dry-run` to inspect the selected retry command before executing it. Use `jv retry --json` when an agent needs the latest retryable failure as structured data.
+
 ## Multiple Main Classes
 
 ```bash

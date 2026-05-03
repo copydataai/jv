@@ -54,6 +54,7 @@ EVENT_RUN_ID=""
 EVENT_SEQUENCE=0
 EVENT_COMMAND_NAME=""
 EVENT_COMMAND_ARGV=()
+RETRY_RUN_ARGS=()
 
 # Helper functions
 error() {
@@ -632,6 +633,7 @@ show_help() {
     echo -e "  ${GREEN}doctor${NC}                       Inspect Java project state and possible entrypoints"
     echo -e "  ${GREEN}history${NC} [--limit N] [--failures] [--json]  Show recent JV run history"
     echo -e "  ${GREEN}events${NC} [--limit N] [--failures] [--json]   Alias for history"
+    echo -e "  ${GREEN}retry${NC} [--dry-run] [--json]     Retry the latest failed or blocked JV run"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} [ClassName] [args...]     Infer, explain, compile, and run"
     echo -e "  ${GREEN}remember${NC} main <ClassName>      Remember a preferred main class in .jv/"
@@ -648,6 +650,7 @@ show_help() {
     echo -e "  jv explain                            # Show what JV would do"
     echo -e "  jv doctor                             # Inspect detected project state"
     echo -e "  jv history                            # Show recent JV runs"
+    echo -e "  jv retry                              # Retry latest failed JV run"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
     echo -e "  jv run ie.atu.sw.Main arg1 arg2      # Run with arguments"
@@ -1666,6 +1669,175 @@ show_history() {
     fi
 }
 
+retry_render_empty_json() {
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    echo '  "found": false,'
+    echo '  "reason": null,'
+    echo '  "status": null,'
+    echo '  "retryCommand": null,'
+    echo '  "runId": null,'
+    echo '  "eventType": null'
+    echo "}"
+}
+
+retry_render_selection_json() {
+    local reason="$1"
+    local status="$2"
+    local retry_command="$3"
+    local run_id="$4"
+    local event_type="$5"
+
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    echo '  "found": true,'
+    printf '  "reason": "%s",\n' "$(json_escape "$reason")"
+    printf '  "status": "%s",\n' "$(json_escape "$status")"
+    printf '  "retryCommand": "%s",\n' "$(json_escape "$retry_command")"
+    printf '  "runId": "%s",\n' "$(json_escape "$run_id")"
+    printf '  "eventType": "%s"\n' "$(json_escape "$event_type")"
+    echo "}"
+}
+
+retry_find_latest_candidate() {
+    [[ -f "$JV_RUNS" ]] || return 1
+
+    local lines=()
+    local line
+    local index
+    while IFS= read -r line; do
+        lines+=("$line")
+    done < "$JV_RUNS"
+
+    for ((index=${#lines[@]} - 1; index >= 0; index--)); do
+        line="${lines[$index]}"
+        history_line_looks_like_json_object "$line" || continue
+
+        local event_type
+        local payload_event
+        local reason
+        local retry_command
+        local run_id
+        local status
+
+        event_type="$(history_extract_json_string "eventType" "$line")"
+        [[ "$event_type" == "failure" ]] || continue
+
+        retry_command="$(history_extract_json_string "retryCommand" "$line")"
+        [[ -n "$retry_command" ]] || continue
+
+        payload_event="$(history_extract_json_string "event" "$line")"
+        reason="$(history_extract_json_string "reason" "$line")"
+        run_id="$(history_extract_json_string "runId" "$line")"
+        case "$payload_event" in
+            blocked) status="blocked" ;;
+            failed) status="failure" ;;
+            *) status="$(history_extract_json_string "status" "$line")" ;;
+        esac
+        [[ -n "$status" ]] || status="failure"
+        [[ -n "$reason" ]] || reason="-"
+        [[ -n "$run_id" ]] || run_id="-"
+
+        printf '%s\t%s\t%s\t%s\t%s\n' "$reason" "$status" "$retry_command" "$run_id" "$event_type"
+        return 0
+    done
+
+    return 1
+}
+
+retry_command_to_run_args() {
+    local retry_command="$1"
+    RETRY_RUN_ARGS=()
+
+    local tokens=()
+    local token
+    # shellcheck disable=SC2206
+    tokens=($retry_command)
+
+    if [[ ${#tokens[@]} -lt 2 || "${tokens[0]}" != "jv" || "${tokens[1]}" != "run" ]]; then
+        return 1
+    fi
+
+    for token in "${tokens[@]:2}"; do
+        if [[ ! "$token" =~ ^[A-Za-z0-9._/@:+,=-]+$ ]]; then
+            return 1
+        fi
+        RETRY_RUN_ARGS+=("$token")
+    done
+}
+
+show_retry() {
+    local dry_run=0
+    local json_mode=0
+    local arg
+    local candidate
+    local reason status retry_command run_id event_type
+
+    while [[ $# -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+            --dry-run)
+                dry_run=1
+                ;;
+            --json)
+                json_mode=1
+                dry_run=1
+                ;;
+            *)
+                error "Usage: jv retry [--dry-run] [--json]"
+                ;;
+        esac
+        shift
+    done
+
+    if ! candidate="$(retry_find_latest_candidate)"; then
+        if [[ $json_mode -eq 1 ]]; then
+            retry_render_empty_json
+        else
+            echo "JV retry"
+            echo "Source: $JV_RUNS"
+            echo ""
+            echo "No failed or blocked JV run found. Run \`jv history --failures\` to inspect failures."
+        fi
+        return 1
+    fi
+
+    IFS=$'\t' read -r reason status retry_command run_id event_type <<<"$candidate"
+
+    if ! retry_command_to_run_args "$retry_command"; then
+        if [[ $json_mode -eq 1 ]]; then
+            retry_render_selection_json "$reason" "$status" "$retry_command" "$run_id" "$event_type"
+        else
+            echo "JV retry"
+            echo "Source: $JV_RUNS"
+            echo "Reason: $reason"
+            echo "Retry command: $retry_command"
+            echo ""
+            echo "Unsafe retry command. JV retry only accepts stored commands shaped like: jv run [args...]"
+        fi
+        return 1
+    fi
+
+    if [[ $json_mode -eq 1 ]]; then
+        retry_render_selection_json "$reason" "$status" "$retry_command" "$run_id" "$event_type"
+        return 0
+    fi
+
+    echo "JV retry"
+    echo "Source: $JV_RUNS"
+    echo "Reason: $reason"
+    echo "Retry command: $retry_command"
+    echo ""
+
+    if [[ $dry_run -eq 1 ]]; then
+        return 0
+    fi
+
+    run_java "${RETRY_RUN_ARGS[@]}"
+}
+
 # Compile Java files
 compile_java() {
     check_java
@@ -1940,6 +2112,9 @@ main() {
             ;;
         events)
             show_history "$@"
+            ;;
+        retry)
+            show_retry "$@"
             ;;
         compile)
             compile_java_with_events "$@"

@@ -965,6 +965,119 @@ JSONL
     fi
 }
 
+test_retry_missing_history_is_empty_state_and_side_effect_free() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    local status
+    set +e
+    output="$("$JV" retry 2>&1)"
+    status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_contains "$output" "JV retry"
+    assert_contains "$output" "No failed or blocked JV run found"
+    assert_not_exists "$TMP_ROOT/app/.jv"
+}
+
+test_retry_dry_run_selects_latest_failure() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{bad json
+{"schemaVersion":1,"eventType":"failure","runId":"run_old","sequence":1,"timestamp":"2026-05-03T00:00:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"old","payload":{"event":"failed","action":"compile","reason":"compile_failed","retryCommand":"jv run Old","exitCode":1}}
+{"schemaVersion":1,"eventType":"failure","runId":"run_new","sequence":1,"timestamp":"2026-05-03T00:01:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"new","payload":{"event":"blocked","action":"run","reason":"main_ambiguous","retryCommand":"jv run App","exitCode":1}}
+JSONL
+
+    local output
+    output="$("$JV" retry --dry-run)"
+
+    assert_contains "$output" "JV retry"
+    assert_contains "$output" "Reason: main_ambiguous"
+    assert_contains "$output" "Retry command: jv run App"
+    assert_not_exists "$TMP_ROOT/app/bin"
+}
+
+test_retry_json_outputs_selection_without_executing() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"schemaVersion":1,"eventType":"failure","runId":"run_123","sequence":1,"timestamp":"2026-05-03T00:00:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"failed","payload":{"event":"failed","action":"compile","reason":"compile_failed","retryCommand":"jv run Main alpha","exitCode":1}}
+JSONL
+
+    local output
+    output="$("$JV" retry --json)"
+
+    assert_contains "$output" '"schemaVersion": 1'
+    assert_contains "$output" '"found": true'
+    assert_contains "$output" '"reason": "compile_failed"'
+    assert_contains "$output" '"retryCommand": "jv run Main alpha"'
+    assert_not_exists "$TMP_ROOT/app/bin"
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.found == true and .retryCommand == "jv run Main alpha"' >/dev/null
+    fi
+}
+
+test_retry_rejects_unsafe_retry_command() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"schemaVersion":1,"eventType":"failure","runId":"run_123","sequence":1,"timestamp":"2026-05-03T00:00:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"failed","payload":{"event":"failed","action":"compile","reason":"compile_failed","retryCommand":"rm -rf /","exitCode":1}}
+JSONL
+
+    local output
+    local status
+    set +e
+    output="$("$JV" retry 2>&1)"
+    status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_contains "$output" "Unsafe retry command"
+}
+
+test_retry_executes_compile_failure_after_fix() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        MissingType value = null;
+        System.out.println(value);
+    }
+}
+JAVA
+
+    set +e
+    "$JV" run Main alpha >/dev/null 2>&1
+    local first_status=$?
+    set -e
+    [[ "$first_status" -ne 0 ]] || fail "Expected initial run to fail"
+
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("retry fixed " + args[0]);
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" retry)"
+
+    assert_contains "$output" "JV retry"
+    assert_contains "$output" "Reason: compile_failed"
+    assert_contains "$output" "Retry command: jv run Main alpha"
+    assert_contains "$output" "retry fixed alpha"
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1606,6 +1719,7 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "doctor                       Inspect Java project state and possible entrypoints"
     assert_contains "$output" "history [--limit N] [--failures] [--json]  Show recent JV run history"
     assert_contains "$output" "events [--limit N] [--failures] [--json]   Alias for history"
+    assert_contains "$output" "retry [--dry-run] [--json]     Retry the latest failed or blocked JV run"
     assert_contains "$output" "run [ClassName] [args...]     Infer, explain, compile, and run"
     assert_contains "$output" "remember main <ClassName>      Remember a preferred main class in .jv/"
     assert_contains "$output" "forget main                    Remove the remembered main class"
@@ -1615,6 +1729,7 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "jv explain                            # Show what JV would do"
     assert_contains "$output" "jv doctor                             # Inspect detected project state"
     assert_contains "$output" "jv history                            # Show recent JV runs"
+    assert_contains "$output" "jv retry                              # Retry latest failed JV run"
 }
 
 test_explain_shows_reasons_and_no_side_effects() {
@@ -1751,6 +1866,11 @@ main() {
     test_history_renders_mixed_legacy_and_future_events
     test_history_skips_corrupt_jsonl_lines
     test_history_json_outputs_normalized_records
+    test_retry_missing_history_is_empty_state_and_side_effect_free
+    test_retry_dry_run_selects_latest_failure
+    test_retry_json_outputs_selection_without_executing
+    test_retry_rejects_unsafe_retry_command
+    test_retry_executes_compile_failure_after_fix
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory

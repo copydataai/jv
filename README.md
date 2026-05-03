@@ -97,6 +97,7 @@ jv clean
 | `jv doctor` | Inspect Java project state and possible entrypoints |
 | `jv history [--limit N] [--failures] [--json]` | Show recent JV run history |
 | `jv events [--limit N] [--failures] [--json]` | Alias for `jv history` |
+| `jv retry [--dry-run] [--json]` | Retry the latest failed or blocked JV run |
 | `jv remember main <ClassName>` | Remember a preferred main class in `.jv/` |
 | `jv forget main` | Remove the remembered main class |
 | `jv clean` | Remove all `.class` files |
@@ -137,6 +138,8 @@ Exit code: 1
 ```
 
 Agents can use the stable `Reason`, `Next action`, and `Retry command` lines for repair loops. JV also records blocked and failed run attempts in `.jv/runs.jsonl` when the memory directory is writable.
+
+Use `jv retry` after fixing source code to rerun the latest failed or blocked JV run. `jv retry --dry-run` prints the selected retry command without executing it, and `jv retry --json` emits the same selection as JSON for agents.
 
 ---
 
