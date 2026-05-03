@@ -55,6 +55,30 @@ assert_status() {
     fi
 }
 
+assert_failure_block() {
+    local output="$1"
+    local reason="$2"
+    local action="$3"
+    local retry="$4"
+
+    assert_contains "$output" "JV failure"
+    assert_contains "$output" "Reason: $reason"
+    assert_contains "$output" "Action: $action"
+    assert_contains "$output" "Next action:"
+    assert_contains "$output" "Retry command: $retry"
+    assert_contains "$output" "Exit code:"
+}
+
+assert_warning_block() {
+    local output="$1"
+    local reason="$2"
+
+    assert_contains "$output" "JV warning"
+    assert_contains "$output" "Reason: $reason"
+    assert_contains "$output" "Message:"
+    assert_contains "$output" "Next action:"
+}
+
 assert_jsonl_valid_if_jq() {
     local file="$1"
     if command -v jq >/dev/null 2>&1; then
