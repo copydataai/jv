@@ -1347,12 +1347,26 @@ compile_java() {
     local classpath
     classpath=$(build_classpath)
     
-    # Compile
-    if javac -d "$BIN_DIR" -cp "$classpath" "${java_files[@]}" 2>&1; then
-        success "Compilation successful"
-    else
-        error "Compilation failed"
+    javac -d "$BIN_DIR" -cp "$classpath" "${java_files[@]}"
+}
+
+compile_for_run_or_fail() {
+    local retry
+    local compile_status
+
+    set +e
+    compile_java
+    compile_status=$?
+    set -e
+
+    if [[ $compile_status -ne 0 ]]; then
+        retry="$(retry_command_for_current_run "$@")"
+        print_failure_block "compile_failed" "compile" "$retry" "$compile_status" >&2
+        append_failure_event "failed" "compile" "compile_failed" "$PLAN_BUILD_DISPLAY" "$retry" "$compile_status" || true
+        return "$compile_status"
     fi
+
+    success "Compilation successful"
 }
 
 # Run Java program
@@ -1448,14 +1462,14 @@ run_java() {
     
     if [[ ! -d "$BIN_DIR" ]]; then
         warn "Output directory '$BIN_DIR' not found. Compiling first..."
-        compile_java
+        compile_for_run_or_fail "$@" || return "$?"
     fi
     
     # Check if class file exists (convert package.Class to package/Class.class)
     local class_file="${class_name//./\/}.class"
     if [[ ! -f "$BIN_DIR/$class_file" ]]; then
         warn "Class file not found. Compiling first..."
-        compile_java
+        compile_for_run_or_fail "$@" || return "$?"
     fi
     
     # Build classpath

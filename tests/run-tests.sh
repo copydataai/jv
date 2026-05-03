@@ -749,6 +749,35 @@ name.jar" -C "$TMP_ROOT/empty" .
     fi
 }
 
+test_run_prints_agent_failure_for_plain_compile_error() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println(message);
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected compile failure"
+    fi
+    assert_contains "$output" "cannot find symbol"
+    assert_failure_block "$output" "compile_failed" "compile" "jv run"
+    assert_contains "$output" "Message: javac failed while compiling the selected plain Java project."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"failure"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"compile_failed"'
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
 test_run_failure_does_not_write_success_memory() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -1370,6 +1399,7 @@ main() {
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
     test_run_escapes_control_characters_in_memory_json
+    test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
     test_run_failure_writes_execution_result_event_without_success_memory
     test_remember_main_resolves_ambiguity
