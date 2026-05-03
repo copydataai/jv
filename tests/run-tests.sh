@@ -116,6 +116,30 @@ assert_jsonl_event_count_at_least() {
     fi
 }
 
+wait_for_output() {
+    local file="$1"
+    local needle="$2"
+    local attempts="${3:-100}"
+
+    while [[ $attempts -gt 0 ]]; do
+        if [[ -f "$file" ]] && grep -Fq "$needle" "$file"; then
+            return 0
+        fi
+        sleep 0.1
+        attempts=$((attempts - 1))
+    done
+
+    echo "Timed out waiting for: $needle" >&2
+    [[ -f "$file" ]] && cat "$file" >&2
+    exit 1
+}
+
+stop_process() {
+    local pid="$1"
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" >/dev/null 2>&1 || true
+}
+
 setup_tmp() {
     cleanup_tmp
     TMP_ROOT="$(mktemp -d)"
@@ -1807,6 +1831,38 @@ test_doctor_json_rejects_extra_args() {
     assert_contains "$output" "Usage: jv doctor [--json]"
 }
 
+test_watch_reruns_when_java_source_changes() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("watch version 1");
+    }
+}
+JAVA
+
+    JV_WATCH_INTERVAL=0.1 "$JV" watch >"$TMP_ROOT/watch.out" 2>&1 &
+    local watch_pid=$!
+    trap 'stop_process "$watch_pid"; cleanup_tmp' EXIT
+
+    wait_for_output "$TMP_ROOT/watch.out" "watch version 1"
+    wait_for_output "$TMP_ROOT/watch.out" "Watch ready."
+
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("watch version 2");
+    }
+}
+JAVA
+
+    wait_for_output "$TMP_ROOT/watch.out" "watch version 2"
+    stop_process "$watch_pid"
+    trap cleanup_tmp EXIT
+}
+
 test_help_lists_diagnostics_commands() {
     local output
     output="$("$JV" help)"
@@ -1816,6 +1872,7 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "history [--limit N] [--failures] [--json]  Show recent JV run history"
     assert_contains "$output" "events [--limit N] [--failures] [--json]   Alias for history"
     assert_contains "$output" "retry [--dry-run] [--json]     Retry the latest failed or blocked JV run"
+    assert_contains "$output" "watch [ClassName] [args...]   Re-run when Java source files change"
     assert_contains "$output" "run [ClassName] [args...]     Infer, explain, compile, and run"
     assert_contains "$output" "remember main <ClassName>      Remember a preferred main class in .jv/"
     assert_contains "$output" "forget main                    Remove the remembered main class"
@@ -1826,6 +1883,7 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "jv doctor                             # Inspect detected project state"
     assert_contains "$output" "jv history                            # Show recent JV runs"
     assert_contains "$output" "jv retry                              # Retry latest failed JV run"
+    assert_contains "$output" "jv watch                              # Re-run on Java source changes"
 }
 
 test_explain_shows_reasons_and_no_side_effects() {
@@ -1992,6 +2050,7 @@ main() {
     test_doctor_json_reports_ambiguous_project
     test_doctor_json_reports_unknown_project
     test_doctor_json_rejects_extra_args
+    test_watch_reruns_when_java_source_changes
     test_help_lists_diagnostics_commands
     echo "All tests passed"
 }

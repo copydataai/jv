@@ -38,6 +38,15 @@ jv retry
 
 Use `jv retry --dry-run` to inspect the selected retry command before executing it. Use `jv retry --json` when an agent needs the latest retryable failure as structured data.
 
+## Watch While Editing
+
+```bash
+jv watch
+jv watch com.example.App alpha beta
+```
+
+`jv watch` runs once immediately, then reruns when Java source files change. Failed builds stay in watch mode so the next edit can recover.
+
 ## Multiple Main Classes
 
 ```bash

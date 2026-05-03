@@ -636,6 +636,7 @@ show_help() {
     echo -e "  ${GREEN}history${NC} [--limit N] [--failures] [--json]  Show recent JV run history"
     echo -e "  ${GREEN}events${NC} [--limit N] [--failures] [--json]   Alias for history"
     echo -e "  ${GREEN}retry${NC} [--dry-run] [--json]     Retry the latest failed or blocked JV run"
+    echo -e "  ${GREEN}watch${NC} [ClassName] [args...]   Re-run when Java source files change"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} [ClassName] [args...]     Infer, explain, compile, and run"
     echo -e "  ${GREEN}remember${NC} main <ClassName>      Remember a preferred main class in .jv/"
@@ -653,6 +654,7 @@ show_help() {
     echo -e "  jv doctor                             # Inspect detected project state"
     echo -e "  jv history                            # Show recent JV runs"
     echo -e "  jv retry                              # Retry latest failed JV run"
+    echo -e "  jv watch                              # Re-run on Java source changes"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
     echo -e "  jv run ie.atu.sw.Main arg1 arg2      # Run with arguments"
@@ -2086,6 +2088,70 @@ show_retry() {
     run_java "${RETRY_RUN_ARGS[@]}"
 }
 
+source_snapshot() {
+    local source_root="$1"
+    local file
+    [[ -d "$source_root" ]] || return 0
+
+    while IFS= read -r -d '' file; do
+        printf '%s\t' "$file"
+        cksum "$file"
+    done < <(find "$source_root" -name "*.java" -print0 2>/dev/null | sort -z)
+}
+
+source_snapshot_checksum() {
+    local source_root="$1"
+    source_snapshot "$source_root" | cksum
+}
+
+watch_wait_for_change() {
+    local source_root="$1"
+    local previous="$2"
+    local current
+
+    while true; do
+        sleep "${JV_WATCH_INTERVAL:-1}"
+        current="$(source_snapshot_checksum "$source_root")"
+        [[ "$current" != "$previous" ]] && return 0
+    done
+}
+
+watch_project() {
+    local args=("$@")
+    local source_root
+    local snapshot
+    local retry
+
+    trap 'echo ""; info "Stopped watch mode"; exit 130' INT TERM
+
+    info "Watching Java sources. Press Ctrl-C to stop."
+    run_java "${args[@]}" || true
+
+    source_root="$PLAN_SOURCE_ROOT"
+    if [[ -z "$source_root" || ! -d "$source_root" ]]; then
+        error "No source root available to watch."
+    fi
+
+    snapshot="$(source_snapshot_checksum "$source_root")"
+    info "Watch ready."
+
+    while true; do
+        watch_wait_for_change "$source_root" "$snapshot"
+        echo ""
+        retry="$(retry_command_for_current_run "${args[@]}")"
+        info "Change detected. Re-running $retry..."
+        if [[ "$PLAN_SHAPE" == "plain-java" ]]; then
+            rm -rf "$BIN_DIR"
+        fi
+        run_java "${args[@]}" || true
+
+        if [[ -n "$PLAN_SOURCE_ROOT" && -d "$PLAN_SOURCE_ROOT" ]]; then
+            source_root="$PLAN_SOURCE_ROOT"
+        fi
+        snapshot="$(source_snapshot_checksum "$source_root")"
+    done
+}
+
 # Compile Java files
 compile_java() {
     check_java
@@ -2366,6 +2432,9 @@ main() {
             ;;
         retry)
             show_retry "$@"
+            ;;
+        watch)
+            watch_project "$@"
             ;;
         compile)
             compile_java_with_events "$@"
