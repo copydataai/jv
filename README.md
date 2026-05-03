@@ -95,6 +95,8 @@ jv clean
 | `jv run [ClassName] [args...]` | Infer, explain, compile, and run the latest code |
 | `jv explain [ClassName]` | Show the detected build/run plan without running |
 | `jv doctor` | Inspect Java project state and possible entrypoints |
+| `jv history [--limit N] [--failures] [--json]` | Show recent JV run history |
+| `jv events [--limit N] [--failures] [--json]` | Alias for `jv history` |
 | `jv remember main <ClassName>` | Remember a preferred main class in `.jv/` |
 | `jv forget main` | Remove the remembered main class |
 | `jv clean` | Remove all `.class` files |
@@ -111,6 +113,14 @@ jv clean
 ### Generated JV Memory
 
 JV does not require a hand-written config file for normal projects. Source files and build tools are truth; `.jv/` is generated memory. JV writes `.jv/state.json` and `.jv/runs.jsonl` after successful runs so humans and coding agents can inspect what JV detected and executed.
+
+Use `jv history` to inspect that run log without reading `.jv/runs.jsonl` directly:
+
+```bash
+jv history
+jv history --failures
+jv history --json
+```
 
 ### Agent-Friendly Failures
 

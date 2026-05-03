@@ -630,6 +630,8 @@ show_help() {
     echo -e "  ${GREEN}init${NC}                          Initialize project in current directory"
     echo -e "  ${GREEN}explain${NC} [ClassName]           Show the detected build/run plan without running"
     echo -e "  ${GREEN}doctor${NC}                       Inspect Java project state and possible entrypoints"
+    echo -e "  ${GREEN}history${NC} [--limit N] [--failures] [--json]  Show recent JV run history"
+    echo -e "  ${GREEN}events${NC} [--limit N] [--failures] [--json]   Alias for history"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} [ClassName] [args...]     Infer, explain, compile, and run"
     echo -e "  ${GREEN}remember${NC} main <ClassName>      Remember a preferred main class in .jv/"
@@ -645,6 +647,7 @@ show_help() {
     echo -e "  jv run                                # Infer, explain, compile, and run"
     echo -e "  jv explain                            # Show what JV would do"
     echo -e "  jv doctor                             # Inspect detected project state"
+    echo -e "  jv history                            # Show recent JV runs"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
     echo -e "  jv run ie.atu.sw.Main arg1 arg2      # Run with arguments"
@@ -1320,6 +1323,349 @@ doctor_project() {
     print_doctor_report
 }
 
+history_extract_json_string() {
+    local key="$1"
+    local line="$2"
+    sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" <<<"$line" | head -n 1
+}
+
+history_main_from_command() {
+    local command_text="$1"
+    local token
+    local previous=""
+    local after_classpath=0
+
+    case "$command_text" in
+        javac\ *) return 0 ;;
+    esac
+
+    for token in $command_text; do
+        if [[ "$previous" == "-cp" || "$previous" == "-classpath" ]]; then
+            after_classpath=1
+            previous="$token"
+            continue
+        fi
+        if [[ $after_classpath -eq 1 ]]; then
+            printf '%s\n' "$token"
+            return 0
+        fi
+        case "$token" in
+            -Dexec.mainClass=*)
+                printf '%s\n' "${token#-Dexec.mainClass=}"
+                return 0
+                ;;
+        esac
+        previous="$token"
+    done
+}
+
+history_normalize_legacy_line() {
+    local line="$1"
+    local event
+    local detail
+    local main_class
+
+    event="$(history_extract_json_string "event" "$line")"
+    detail="$(history_extract_json_string "detail" "$line")"
+
+    if [[ "$event" != "executed" || -z "$detail" ]]; then
+        return 1
+    fi
+
+    main_class="$(history_main_from_command "$detail")"
+    printf 'success\tresult\t-\t-\t-\t%s\t%s\tExecuted %s\t-\n' "$main_class" "$detail" "$detail"
+}
+
+history_line_looks_like_json_object() {
+    local line="$1"
+    [[ "$line" =~ ^[[:space:]]*\{.*\}[[:space:]]*$ ]]
+}
+
+history_extract_json_number_or_string() {
+    local key="$1"
+    local line="$2"
+    local value
+    value="$(history_extract_json_string "$key" "$line")"
+    if [[ -n "$value" ]]; then
+        printf '%s\n' "$value"
+        return 0
+    fi
+    sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\\([^,}][^,}]*\\).*/\\1/p" <<<"$line" | head -n 1 | xargs
+}
+
+history_extract_argv_command() {
+    local key_path="$1"
+    local line="$2"
+    local array_text
+    : "$key_path"
+    array_text="$(sed -n 's/.*"argv"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' <<<"$line" | tail -n 1)"
+    if [[ -z "$array_text" ]]; then
+        return 0
+    fi
+    printf '%s\n' "$array_text" | sed 's/"//g; s/[[:space:]]*,[[:space:]]*/ /g'
+}
+
+history_normalize_future_line() {
+    local line="$1"
+    local status
+    local event_type
+    local timestamp
+    local run_id
+    local event_id
+    local summary
+    local reason
+    local command_text
+    local main_class
+    local level
+
+    if ! grep -q '"schemaVersion"[[:space:]]*:' <<<"$line"; then
+        return 1
+    fi
+
+    status="$(history_extract_json_string "status" "$line")"
+    level="$(history_extract_json_string "level" "$line")"
+    reason="$(history_extract_json_string "classification" "$line")"
+    event_type="$(history_extract_json_string "eventType" "$line")"
+    timestamp="$(history_extract_json_string "timestamp" "$line")"
+    run_id="$(history_extract_json_string "runId" "$line")"
+    event_id="$(history_extract_json_string "eventId" "$line")"
+    summary="$(history_extract_json_string "summary" "$line")"
+    command_text="$(history_extract_argv_command "payload.step.argv" "$line")"
+
+    if [[ -z "$command_text" ]]; then
+        command_text="$(history_extract_json_string "display" "$line")"
+    fi
+    if [[ -z "$reason" ]]; then
+        reason="$(history_extract_json_string "reason" "$line")"
+    fi
+    if [[ -z "$status" ]]; then
+        if [[ "$level" == "error" ]]; then
+            status="failure"
+        else
+            status="info"
+        fi
+    fi
+    if [[ "$status" == "failure" && "$reason" == *"missing-main"* ]]; then
+        status="blocked"
+    fi
+    if [[ "$reason" == *"missing-main"* || "$reason" == *"ambiguous-main"* ]]; then
+        status="blocked"
+    fi
+
+    main_class="$(history_main_from_command "$command_text")"
+    [[ -n "$timestamp" ]] || timestamp="-"
+    [[ -n "$run_id" ]] || run_id="-"
+    [[ -n "$event_id" ]] || event_id="-"
+    [[ -n "$main_class" ]] || main_class="-"
+    [[ -n "$command_text" ]] || command_text="-"
+    [[ -n "$summary" ]] || summary="-"
+    [[ -n "$reason" ]] || reason="-"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$status" "$event_type" "$timestamp" "$run_id" "$event_id" "$main_class" "$command_text" "$summary" "$reason"
+}
+
+history_render_text_rows() {
+    local empty_message="$1"
+    shift
+    local rows=("$@")
+    local row
+    local index=1
+    local status event_type timestamp run_id event_id main_class command_text summary reason
+    : "$event_type" "$timestamp" "$run_id" "$event_id" "$summary"
+
+    echo "JV history"
+    echo "Source: $JV_RUNS"
+    echo ""
+
+    if [[ ${#rows[@]} -eq 0 ]]; then
+        echo "$empty_message"
+        return 0
+    fi
+
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r status event_type timestamp run_id event_id main_class command_text summary reason <<<"$row"
+        : "$timestamp" "$run_id" "$event_id" "$summary"
+        [[ -n "$main_class" && "$main_class" != "-" ]] || main_class="-"
+        [[ -n "$command_text" && "$command_text" != "-" ]] || command_text="-"
+        printf '%d. %s  %s  %s\n' "$index" "$status" "$main_class" "$command_text"
+        if [[ -n "$reason" && "$reason" != "-" ]]; then
+            printf '   Reason: %s\n' "$reason"
+        fi
+        index=$((index + 1))
+    done
+}
+
+history_json_value() {
+    local value="$1"
+    if [[ -z "$value" || "$value" == "-" ]]; then
+        printf 'null'
+    else
+        printf '"%s"' "$(json_escape "$value")"
+    fi
+}
+
+history_render_json_rows() {
+    local limit="$1"
+    local failures_only="$2"
+    local corrupt_count="$3"
+    shift 3
+    local rows=("$@")
+    local row
+    local first=1
+    local status event_type timestamp run_id event_id main_class command_text summary reason
+
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    printf '  "limit": %s,\n' "$limit"
+    if [[ $failures_only -eq 1 ]]; then
+        echo '  "failuresOnly": true,'
+    else
+        echo '  "failuresOnly": false,'
+    fi
+    echo '  "records": ['
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r status event_type timestamp run_id event_id main_class command_text summary reason <<<"$row"
+        if [[ $first -eq 0 ]]; then
+            echo ","
+        fi
+        echo "    {"
+        printf '      "status": %s,\n' "$(history_json_value "$status")"
+        printf '      "eventType": %s,\n' "$(history_json_value "$event_type")"
+        printf '      "timestamp": %s,\n' "$(history_json_value "$timestamp")"
+        printf '      "runId": %s,\n' "$(history_json_value "$run_id")"
+        printf '      "eventId": %s,\n' "$(history_json_value "$event_id")"
+        printf '      "mainClass": %s,\n' "$(history_json_value "$main_class")"
+        printf '      "command": %s,\n' "$(history_json_value "$command_text")"
+        printf '      "summary": %s,\n' "$(history_json_value "$summary")"
+        printf '      "reason": %s\n' "$(history_json_value "$reason")"
+        printf '    }'
+        first=0
+    done
+    echo ""
+    echo '  ],'
+    echo '  "warnings": ['
+    if [[ $corrupt_count -gt 0 ]]; then
+        echo "    {"
+        echo '      "type": "corrupt-line",'
+        printf '      "count": %s,\n' "$corrupt_count"
+        if [[ $corrupt_count -eq 1 ]]; then
+            printf '      "message": "Skipped 1 corrupt %s line"\n' "$(json_escape "$JV_RUNS")"
+        else
+            printf '      "message": "Skipped %s corrupt %s lines"\n' "$corrupt_count" "$(json_escape "$JV_RUNS")"
+        fi
+        echo "    }"
+    fi
+    echo '  ]'
+    echo "}"
+}
+
+show_history() {
+    local limit=10
+    local failures_only=0
+    local json_mode=0
+    local arg
+    local rows=()
+    local line
+    local normalized
+    local empty_message
+    local corrupt_count=0
+
+    while [[ $# -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+            --limit)
+                shift
+                limit="${1:-}"
+                ;;
+            --failures)
+                failures_only=1
+                ;;
+            --json)
+                json_mode=1
+                ;;
+            *)
+                error "Unknown history option: $arg"
+                ;;
+        esac
+        shift || true
+    done
+
+    : "$failures_only" "$json_mode"
+
+    if [[ ! "$limit" =~ ^[1-9][0-9]*$ ]]; then
+        error "--limit must be a positive integer"
+    fi
+
+    if [[ ! -e "$JV_RUNS" ]]; then
+        if [[ $json_mode -eq 1 ]]; then
+            history_render_json_rows "$limit" "$failures_only" 0
+            return 0
+        fi
+        echo "JV history"
+        echo "Source: $JV_RUNS"
+        echo ""
+        echo "No JV history found. Run \`jv run\` to create $JV_RUNS."
+        return 0
+    fi
+
+    if [[ ! -r "$JV_RUNS" ]]; then
+        error "Cannot read $JV_RUNS"
+    fi
+
+    while IFS= read -r line; do
+        if ! history_line_looks_like_json_object "$line"; then
+            corrupt_count=$((corrupt_count + 1))
+            continue
+        fi
+
+        normalized="$(history_normalize_future_line "$line" || true)"
+        if [[ -z "$normalized" ]]; then
+            normalized="$(history_normalize_legacy_line "$line" || true)"
+        fi
+        if [[ -n "$normalized" ]]; then
+            rows=("$normalized" "${rows[@]}")
+        else
+            corrupt_count=$((corrupt_count + 1))
+        fi
+    done < "$JV_RUNS"
+
+    if [[ $failures_only -eq 1 ]]; then
+        local filtered=()
+        local row_status
+        local row
+        for row in "${rows[@]}"; do
+            IFS=$'\t' read -r row_status _ <<<"$row"
+            if [[ "$row_status" == "failure" || "$row_status" == "blocked" ]]; then
+                filtered+=("$row")
+            fi
+        done
+        rows=("${filtered[@]}")
+    fi
+
+    if [[ ${#rows[@]} -gt "$limit" ]]; then
+        rows=("${rows[@]:0:$limit}")
+    fi
+
+    if [[ $json_mode -eq 1 ]]; then
+        history_render_json_rows "$limit" "$failures_only" "$corrupt_count" "${rows[@]}"
+        return 0
+    fi
+
+    empty_message="No JV history entries found in $JV_RUNS."
+    if [[ $failures_only -eq 1 ]]; then
+        empty_message="No failed or blocked JV events found."
+    fi
+    history_render_text_rows "$empty_message" "${rows[@]}"
+    if [[ $corrupt_count -eq 1 ]]; then
+        echo ""
+        echo "Warning: skipped 1 corrupt $JV_RUNS line"
+    elif [[ $corrupt_count -gt 1 ]]; then
+        echo ""
+        echo "Warning: skipped $corrupt_count corrupt $JV_RUNS lines"
+    fi
+}
+
 # Compile Java files
 compile_java() {
     check_java
@@ -1560,6 +1906,12 @@ main() {
                 error "Usage: jv doctor"
             fi
             doctor_project
+            ;;
+        history)
+            show_history "$@"
+            ;;
+        events)
+            show_history "$@"
             ;;
         compile)
             compile_java "$@"

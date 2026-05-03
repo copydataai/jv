@@ -730,6 +730,180 @@ JAVA
     assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"memory_write_failed"'
 }
 
+test_history_renders_legacy_run_log() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main one two"}
+JSONL
+    cat > .jv/state.json <<'JSON'
+{
+  "schemaVersion": 1,
+  "projectShape": "plain-java",
+  "lastSuccessfulMainClass": "Main",
+  "lastPlan": {
+    "build": "javac -d bin -cp bin <sources>",
+    "run": "java -cp bin Main one two"
+  }
+}
+JSON
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "JV history"
+    assert_contains "$output" "Source: .jv/runs.jsonl"
+    assert_contains "$output" "1. success  Main  java -cp bin Main one two"
+}
+
+test_events_alias_matches_history_for_legacy_run_log() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+JSONL
+
+    local history_output
+    local events_output
+    history_output="$("$JV" history)"
+    events_output="$("$JV" events)"
+
+    [[ "$history_output" == "$events_output" ]] || fail "Expected jv events to match jv history"
+}
+
+test_history_missing_jv_is_empty_state_and_side_effect_free() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "No JV history found"
+    assert_not_exists "$TMP_ROOT/app/.jv"
+    assert_not_exists "$TMP_ROOT/app/bin"
+}
+
+test_history_empty_runs_log_is_empty_state() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    : > .jv/runs.jsonl
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "No JV history entries found in .jv/runs.jsonl."
+}
+
+test_history_limit_shows_newest_records() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin First"}
+{"event":"executed","detail":"java -cp bin Second"}
+JSONL
+
+    local output
+    output="$("$JV" history --limit 1)"
+
+    assert_contains "$output" "1. success  Second  java -cp bin Second"
+    assert_not_contains "$output" "First"
+}
+
+test_history_failures_filter_empty_for_legacy_successes() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+JSONL
+
+    local output
+    output="$("$JV" history --failures)"
+
+    assert_contains "$output" "No failed or blocked JV events found."
+    assert_not_contains "$output" "java -cp bin Main"
+}
+
+test_history_rejects_invalid_limit() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    set +e
+    local output
+    output="$("$JV" history --limit nope 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected invalid --limit to fail"
+    fi
+    assert_contains "$output" "Error: --limit must be a positive integer"
+}
+
+test_history_renders_mixed_legacy_and_future_events() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+{"schemaVersion":1,"eventId":"evt_2","runId":"run_2","timestamp":"2026-05-01T20:05:00Z","command":{"argv":["jv","run"],"mode":"run"},"eventType":"result","level":"error","summary":"Compilation failed","payload":{"status":"failure","phase":"compile","step":{"kind":"build","argv":["javac","-d","bin","-cp","bin","src/Main.java"],"exitCode":1},"classification":"compile-failure","nextAction":"Fix compiler errors and run jv run again"}}
+JSONL
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "1. failure  -  javac -d bin -cp bin src/Main.java"
+    assert_contains "$output" "Reason: compile-failure"
+    assert_contains "$output" "2. success  Main  java -cp bin Main"
+}
+
+test_history_skips_corrupt_jsonl_lines() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+not json
+{"schemaVersion":1,"eventType":"result","level":"error","summary":"No main class","payload":{"status":"blocked","classification":"missing-main"}}
+JSONL
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "1. blocked  -  -"
+    assert_contains "$output" "Reason: missing-main"
+    assert_contains "$output" "2. success  Main  java -cp bin Main"
+    assert_contains "$output" "Warning: skipped 1 corrupt .jv/runs.jsonl line"
+}
+
+test_history_json_outputs_normalized_records() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main one two"}
+JSONL
+
+    local output
+    output="$("$JV" history --json)"
+
+    assert_contains "$output" '"schemaVersion": 1'
+    assert_contains "$output" '"source": ".jv/runs.jsonl"'
+    assert_contains "$output" '"failuresOnly": false'
+    assert_contains "$output" '"status": "success"'
+    assert_contains "$output" '"mainClass": "Main"'
+    assert_contains "$output" '"command": "java -cp bin Main one two"'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.records[0].status == "success"' >/dev/null
+    fi
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1369,6 +1543,8 @@ test_help_lists_diagnostics_commands() {
 
     assert_contains "$output" "explain [ClassName]           Show the detected build/run plan without running"
     assert_contains "$output" "doctor                       Inspect Java project state and possible entrypoints"
+    assert_contains "$output" "history [--limit N] [--failures] [--json]  Show recent JV run history"
+    assert_contains "$output" "events [--limit N] [--failures] [--json]   Alias for history"
     assert_contains "$output" "run [ClassName] [args...]     Infer, explain, compile, and run"
     assert_contains "$output" "remember main <ClassName>      Remember a preferred main class in .jv/"
     assert_contains "$output" "forget main                    Remove the remembered main class"
@@ -1377,6 +1553,7 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "jv run                                # Infer, explain, compile, and run"
     assert_contains "$output" "jv explain                            # Show what JV would do"
     assert_contains "$output" "jv doctor                             # Inspect detected project state"
+    assert_contains "$output" "jv history                            # Show recent JV runs"
 }
 
 test_explain_shows_reasons_and_no_side_effects() {
@@ -1501,6 +1678,16 @@ main() {
     test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
+    test_history_renders_legacy_run_log
+    test_events_alias_matches_history_for_legacy_run_log
+    test_history_missing_jv_is_empty_state_and_side_effect_free
+    test_history_empty_runs_log_is_empty_state
+    test_history_limit_shows_newest_records
+    test_history_failures_filter_empty_for_legacy_successes
+    test_history_rejects_invalid_limit
+    test_history_renders_mixed_legacy_and_future_events
+    test_history_skips_corrupt_jsonl_lines
+    test_history_json_outputs_normalized_records
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
