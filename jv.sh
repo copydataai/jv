@@ -637,6 +637,7 @@ show_help() {
     echo -e "  ${GREEN}history${NC} [--limit N] [--failures] [--json]  Show recent JV run history"
     echo -e "  ${GREEN}events${NC} [--limit N] [--failures] [--json]   Alias for history"
     echo -e "  ${GREEN}retry${NC} [--dry-run] [--json]     Retry the latest failed or blocked JV run"
+    echo -e "  ${GREEN}fix${NC} [--json]                  Show a repair brief for the latest failed run"
     echo -e "  ${GREEN}watch${NC} [ClassName] [args...]   Re-run when Java source files change"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} [ClassName] [args...]     Infer, explain, compile, and run"
@@ -655,6 +656,7 @@ show_help() {
     echo -e "  jv doctor                             # Inspect detected project state"
     echo -e "  jv history                            # Show recent JV runs"
     echo -e "  jv retry                              # Retry latest failed JV run"
+    echo -e "  jv fix                                # Show latest failure repair brief"
     echo -e "  jv watch                              # Re-run on Java source changes"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
@@ -1675,6 +1677,7 @@ history_normalize_future_line() {
     local command_text
     local main_class
     local level
+    local payload_event
 
     if ! grep -q '"schemaVersion"[[:space:]]*:' <<<"$line"; then
         return 1
@@ -1682,6 +1685,7 @@ history_normalize_future_line() {
 
     status="$(history_extract_json_string "status" "$line")"
     level="$(history_extract_json_string "level" "$line")"
+    payload_event="$(history_extract_json_string "event" "$line")"
     reason="$(history_extract_json_string "classification" "$line")"
     event_type="$(history_extract_json_string "eventType" "$line")"
     timestamp="$(history_extract_json_string "timestamp" "$line")"
@@ -1697,7 +1701,11 @@ history_normalize_future_line() {
         reason="$(history_extract_json_string "reason" "$line")"
     fi
     if [[ -z "$status" ]]; then
-        if [[ "$level" == "error" ]]; then
+        if [[ "$event_type" == "failure" && "$payload_event" == "blocked" ]]; then
+            status="blocked"
+        elif [[ "$event_type" == "failure" ]]; then
+            status="failure"
+        elif [[ "$level" == "error" ]]; then
             status="failure"
         else
             status="info"
@@ -2093,6 +2101,129 @@ show_retry() {
     run_java "${RETRY_RUN_ARGS[@]}"
 }
 
+fix_repair_steps() {
+    local reason="$1"
+
+    case "$reason" in
+        compile_failed|maven_compile_failed)
+            printf '%s\n' \
+                "Inspect the compiler errors above the JV failure block." \
+                "Fix the Java source reported by javac or Maven." \
+                "Run jv retry to rebuild and rerun the same JV command."
+            ;;
+        runtime_failed|maven_run_failed)
+            printf '%s\n' \
+                "Inspect the runtime exception or non-zero exit output above the JV failure block." \
+                "Fix the Java logic or input arguments that caused the program to fail." \
+                "Run jv retry to rerun the same JV command."
+            ;;
+        main_ambiguous)
+            printf '%s\n' \
+                "Choose one detected main class from the ranked candidate list." \
+                "Run the selected class explicitly or remember it as the default." \
+                "Run jv retry after the project state is unblocked."
+            ;;
+        main_missing|unknown_project|source_missing|tool_missing)
+            printf '%s\n' \
+                "Run jv doctor to inspect the current project state." \
+                "Fix the blocker reported by JV." \
+                "Run jv retry after the blocker is resolved."
+            ;;
+        *)
+            printf '%s\n' \
+                "Inspect the latest JV failure output." \
+                "Fix the reported source or project state." \
+                "Run jv retry to try the same JV command again."
+            ;;
+    esac
+}
+
+fix_render_empty_json() {
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    echo '  "found": false,'
+    echo '  "reason": null,'
+    echo '  "retryCommand": null,'
+    echo '  "repairSteps": []'
+    echo "}"
+}
+
+fix_render_json() {
+    local reason="$1"
+    local retry_command="$2"
+    local run_id="$3"
+    local event_type="$4"
+    local steps=()
+    local step
+
+    while IFS= read -r step; do
+        steps+=("$step")
+    done < <(fix_repair_steps "$reason")
+
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    echo '  "found": true,'
+    printf '  "reason": "%s",\n' "$(json_escape "$reason")"
+    printf '  "retryCommand": "%s",\n' "$(json_escape "$retry_command")"
+    printf '  "runId": "%s",\n' "$(json_escape "$run_id")"
+    printf '  "eventType": "%s",\n' "$(json_escape "$event_type")"
+    printf '  "repairSteps": %s\n' "$(json_array_from_lines "${steps[@]}")"
+    echo "}"
+}
+
+show_fix() {
+    local json_mode=0
+    local arg
+    local candidate
+    local reason status retry_command run_id event_type
+    local step
+    : "$status"
+
+    while [[ $# -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+            --json)
+                json_mode=1
+                ;;
+            *)
+                error "Usage: jv fix [--json]"
+                ;;
+        esac
+        shift
+    done
+
+    if ! candidate="$(retry_find_latest_candidate)"; then
+        if [[ $json_mode -eq 1 ]]; then
+            fix_render_empty_json
+        else
+            echo "JV fix"
+            echo "Source: $JV_RUNS"
+            echo ""
+            echo "No failed or blocked JV run found. Run \`jv history --failures\` to inspect failures."
+        fi
+        return 1
+    fi
+
+    IFS=$'\t' read -r reason status retry_command run_id event_type <<<"$candidate"
+
+    if [[ $json_mode -eq 1 ]]; then
+        fix_render_json "$reason" "$retry_command" "$run_id" "$event_type"
+        return 0
+    fi
+
+    echo "JV fix"
+    echo "Source: $JV_RUNS"
+    echo "Reason: $reason"
+    echo "Retry command: $retry_command"
+    echo ""
+    echo "Repair brief:"
+    while IFS= read -r step; do
+        echo "- $step"
+    done < <(fix_repair_steps "$reason")
+}
+
 source_snapshot() {
     local source_root="$1"
     local file
@@ -2437,6 +2568,9 @@ main() {
             ;;
         retry)
             show_retry "$@"
+            ;;
+        fix)
+            show_fix "$@"
             ;;
         watch)
             watch_project "$@"

@@ -102,6 +102,7 @@ jv clean
 | `jv history [--limit N] [--failures] [--json]` | Show recent JV run history |
 | `jv events [--limit N] [--failures] [--json]` | Alias for `jv history` |
 | `jv retry [--dry-run] [--json]` | Retry the latest failed or blocked JV run |
+| `jv fix [--json]` | Show a repair brief for the latest failed run |
 | `jv watch [ClassName] [args...]` | Re-run when Java source files change |
 | `jv remember main <ClassName>` | Remember a preferred main class in `.jv/` |
 | `jv forget main` | Remove the remembered main class |
@@ -148,6 +149,8 @@ Exit code: 1
 Agents can use the stable `Reason`, `Next action`, and `Retry command` lines for repair loops. JV also records blocked and failed run attempts in `.jv/runs.jsonl` when the memory directory is writable.
 
 Use `jv retry` after fixing source code to rerun the latest failed or blocked JV run. `jv retry --dry-run` prints the selected retry command without executing it, and `jv retry --json` emits the same selection as JSON for agents.
+
+Use `jv fix` to print a read-only repair brief for the latest failed or blocked run. `jv fix --json` emits the same brief as structured data for agents.
 
 Use `jv watch` while editing to run once immediately, then rerun whenever Java source files change.
 

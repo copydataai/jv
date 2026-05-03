@@ -6,6 +6,7 @@ All notable changes to JV will be documented in this file.
 
 ### Added
 - Agent-ready history, retry, doctor JSON, and watch workflows.
+- Read-only `jv fix` repair briefs for the latest failed or blocked run.
 - Schema v1 compile event recording.
 - Static shell completions for Bash, Zsh, and Fish.
 - Local release archive script and Homebrew formula template.

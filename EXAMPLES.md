@@ -38,6 +38,15 @@ jv retry
 
 Use `jv retry --dry-run` to inspect the selected retry command before executing it. Use `jv retry --json` when an agent needs the latest retryable failure as structured data.
 
+## Inspect The Repair Brief
+
+```bash
+jv fix
+jv fix --json
+```
+
+`jv fix` does not edit files. It summarizes the latest failed or blocked JV run and tells you what to repair before running `jv retry`.
+
 ## Watch While Editing
 
 ```bash
