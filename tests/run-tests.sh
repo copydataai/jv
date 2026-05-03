@@ -55,6 +55,30 @@ assert_status() {
     fi
 }
 
+assert_failure_block() {
+    local output="$1"
+    local reason="$2"
+    local action="$3"
+    local retry="$4"
+
+    assert_contains "$output" "JV failure"
+    assert_contains "$output" "Reason: $reason"
+    assert_contains "$output" "Action: $action"
+    assert_contains "$output" "Next action:"
+    assert_contains "$output" "Retry command: $retry"
+    assert_contains "$output" "Exit code:"
+}
+
+assert_warning_block() {
+    local output="$1"
+    local reason="$2"
+
+    assert_contains "$output" "JV warning"
+    assert_contains "$output" "Reason: $reason"
+    assert_contains "$output" "Message:"
+    assert_contains "$output" "Next action:"
+}
+
 assert_jsonl_valid_if_jq() {
     local file="$1"
     if command -v jq >/dev/null 2>&1; then
@@ -250,6 +274,40 @@ JAVA
     assert_jsonl_contains_event_type "$events" "blockers"
     assert_contains "$(cat "$events")" '"classification":"ambiguous-main"'
     assert_not_contains "$(cat "$events")" '"eventType":"execution_start"'
+}
+
+test_run_prints_agent_failure_for_ambiguous_main() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_failure_block "$output" "main_ambiguous" "planner" "jv run App"
+    assert_contains "$output" "Message: Multiple main classes were found."
+    assert_contains "$output" "Next action: Pass one main class explicitly, for example \`jv run App\`."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"failure"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"main_ambiguous"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"retryCommand":"jv run App"'
 }
 
 test_run_refuses_multiple_plain_main_classes_with_non_candidate_token() {
@@ -640,7 +698,9 @@ JAVA
         fail "Expected successful Java run to preserve exit 0 when memory write fails; got $status"
     fi
     assert_contains "$output" "memory unavailable"
-    assert_contains "$output" "Warning:"
+    assert_warning_block "$output" "memory_write_failed"
+    assert_contains "$output" "Message: Could not write JV memory to .jv/."
+    assert_contains "$output" "Next action: Check that .jv/ is a writable directory."
 }
 
 test_run_state_write_failure_warns_even_when_run_log_can_append() {
@@ -665,7 +725,9 @@ JAVA
         fail "Expected successful Java run to preserve exit 0 when state write fails; got $status"
     fi
     assert_contains "$output" "partial memory"
-    assert_contains "$output" "Warning: Could not write JV memory"
+    assert_warning_block "$output" "memory_write_failed"
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"warning"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"memory_write_failed"'
 }
 
 test_run_escapes_control_characters_in_memory_json() {
@@ -691,6 +753,35 @@ name.jar" -C "$TMP_ROOT/empty" .
     fi
 }
 
+test_run_prints_agent_failure_for_plain_compile_error() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println(message);
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected compile failure"
+    fi
+    assert_contains "$output" "cannot find symbol"
+    assert_failure_block "$output" "compile_failed" "compile" "jv run"
+    assert_contains "$output" "Message: javac failed while compiling the selected plain Java project."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"failure"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"compile_failed"'
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
 test_run_failure_does_not_write_success_memory() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -705,14 +796,17 @@ public class Main {
 JAVA
 
     set +e
-    "$JV" run >"$TMP_ROOT/jv-test-failing-run.out" 2>&1
+    local output
+    output="$("$JV" run Main alpha 2>&1)"
     local status=$?
     set -e
 
-    if [[ $status -ne 7 ]]; then
-        fail "Expected Java exit status 7; got $status"
-    fi
-    assert_contains "$(cat "$TMP_ROOT/jv-test-failing-run.out")" "failing main"
+    assert_status "$status" 7
+    assert_contains "$output" "failing main"
+    assert_failure_block "$output" "runtime_failed" "runtime" "jv run Main alpha"
+    assert_contains "$output" "Message: Java exited with a non-zero status while running Main."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"failure"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"runtime_failed"'
     assert_not_exists "$TMP_ROOT/app/.jv/state.json"
 }
 
@@ -1011,6 +1105,102 @@ JAVA
     assert_contains "$output" "arg: two"
 }
 
+test_run_prints_agent_failure_for_maven_compile_error() {
+    if ! command -v mvn >/dev/null 2>&1; then
+        echo "Skipping Maven failure test; mvn not installed"
+        return 0
+    fi
+
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/main/java/com/example"
+    cd "$TMP_ROOT/app"
+    cat > pom.xml <<'XML'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+  </properties>
+</project>
+XML
+    cat > src/main/java/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println(message);
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected Maven compile failure"
+    fi
+    assert_failure_block "$output" "maven_compile_failed" "maven" "jv run"
+    assert_contains "$output" "Message: Maven failed during \`mvn compile\`."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"maven_compile_failed"'
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
+test_run_prints_agent_failure_for_maven_runtime_error() {
+    if ! command -v mvn >/dev/null 2>&1; then
+        echo "Skipping Maven runtime failure test; mvn not installed"
+        return 0
+    fi
+
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/main/java/com/example"
+    cd "$TMP_ROOT/app"
+    cat > pom.xml <<'XML'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+  </properties>
+</project>
+XML
+    cat > src/main/java/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        throw new IllegalStateException("maven runtime failure");
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run com.example.App demo 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected Maven runtime failure"
+    fi
+    assert_contains "$output" "maven runtime failure"
+    assert_failure_block "$output" "maven_run_failed" "maven" "jv run com.example.App demo"
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"maven_run_failed"'
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
 test_doctor_reports_project_state() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -1289,6 +1479,7 @@ main() {
     test_run_infers_single_plain_main_class_with_args
     test_run_refuses_multiple_plain_main_classes
     test_run_writes_blocker_event_without_execution_start
+    test_run_prints_agent_failure_for_ambiguous_main
     test_run_refuses_multiple_plain_main_classes_with_non_candidate_token
     test_run_ignores_commented_plain_main_signatures
     test_run_ignores_block_commented_plain_main_signatures
@@ -1311,6 +1502,7 @@ main() {
     test_run_memory_write_failure_preserves_success_exit
     test_run_state_write_failure_warns_even_when_run_log_can_append
     test_run_escapes_control_characters_in_memory_json
+    test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
     test_run_failure_writes_execution_result_event_without_success_memory
     test_remember_main_resolves_ambiguity
@@ -1321,6 +1513,8 @@ main() {
     test_remember_main_rejects_invalid_class_names
     test_forget_main_rejects_extra_args
     test_maven_explain_and_run
+    test_run_prints_agent_failure_for_maven_compile_error
+    test_run_prints_agent_failure_for_maven_runtime_error
     test_doctor_reports_project_state
     test_doctor_reports_tool_versions
     test_doctor_survives_broken_tool_versions
