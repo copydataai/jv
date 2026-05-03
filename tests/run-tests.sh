@@ -236,6 +236,10 @@ JAVA
     assert_contains "$output" "com.example.App"
     assert_contains "$output" "com.example.Tool"
     assert_contains "$output" "jv run <MainClass>"
+    assert_contains "$output" "Main class candidates:"
+    assert_contains "$output" "1. com.example.App - class name looks like an application entrypoint"
+    assert_contains "$output" "2. com.example.Tool - utility or example-looking entrypoint"
+    assert_contains "$output" "Run one now: jv run com.example.App"
 }
 
 test_run_writes_blocker_event_without_execution_start() {
@@ -346,6 +350,7 @@ JAVA
     assert_contains "$output" "com.example.App"
     assert_contains "$output" "com.example.Tool"
     assert_contains "$output" "jv run <MainClass>"
+    assert_contains "$output" "1. com.example.App - class name looks like an application entrypoint"
 }
 
 test_run_ignores_commented_plain_main_signatures() {
@@ -1693,8 +1698,8 @@ JAVA
 
     assert_contains "$output" "Blockers"
     assert_contains "$output" "Multiple main classes found"
-    assert_contains "$output" "App"
-    assert_contains "$output" "Tool"
+    assert_contains "$output" "1. App - class name looks like an application entrypoint"
+    assert_contains "$output" "2. Tool - utility or example-looking entrypoint"
 }
 
 test_doctor_reports_unknown_project_as_blocker() {

@@ -42,6 +42,7 @@ PLAN_BUILD_KIND=""
 PLAN_RUN_KIND=""
 PLAN_REQUIRED_TOOLS=()
 PLAN_MAIN_CANDIDATES=()
+PLAN_MAIN_CANDIDATE_REASONS=()
 PLAN_REASONS=()
 PLAN_WARNINGS=()
 PLAN_BLOCKERS=()
@@ -140,6 +141,7 @@ reset_plan() {
     PLAN_RUN_KIND=""
     PLAN_REQUIRED_TOOLS=()
     PLAN_MAIN_CANDIDATES=()
+    PLAN_MAIN_CANDIDATE_REASONS=()
     PLAN_REASONS=()
     PLAN_WARNINGS=()
     PLAN_BLOCKERS=()
@@ -923,6 +925,123 @@ plan_main_candidates_csv() {
     printf '%s' "$candidates"
 }
 
+main_class_basename() {
+    local main_class="$1"
+    printf '%s' "${main_class##*.}"
+}
+
+normalized_project_name() {
+    local name
+    name="$(basename "$PWD")"
+    printf '%s' "$name" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]'
+}
+
+normalized_class_name() {
+    local name="$1"
+    printf '%s' "$name" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]'
+}
+
+main_candidate_depth() {
+    local main_class="$1"
+    local dots="${main_class//[^.]}"
+    printf '%s' "${#dots}"
+}
+
+main_candidate_reason() {
+    local main_class="$1"
+    local basename
+    local normalized_project
+    local normalized_class
+    basename="$(main_class_basename "$main_class")"
+    normalized_project="$(normalized_project_name)"
+    normalized_class="$(normalized_class_name "$basename")"
+
+    if [[ -n "$PLAN_LAST_SUCCESSFUL_MAIN" && "$main_class" == "$PLAN_LAST_SUCCESSFUL_MAIN" ]]; then
+        printf 'last successful main in this project'
+    elif [[ "$basename" == "Main" ]]; then
+        printf 'conventional Java entrypoint'
+    elif [[ "$basename" == *Application || "$basename" == *App ]]; then
+        printf 'class name looks like an application entrypoint'
+    elif [[ -n "$normalized_project" && "$normalized_class" == "$normalized_project" ]]; then
+        printf 'class name matches the project directory'
+    elif [[ "$basename" =~ (Test|Tests|Tool|Util|Utils|Helper|Example|Scratch)$ ]]; then
+        printf 'utility or example-looking entrypoint'
+    else
+        printf 'detected public static main method'
+    fi
+}
+
+main_candidate_score() {
+    local main_class="$1"
+    local basename
+    local score=500
+    basename="$(main_class_basename "$main_class")"
+
+    if [[ -n "$PLAN_LAST_SUCCESSFUL_MAIN" && "$main_class" == "$PLAN_LAST_SUCCESSFUL_MAIN" ]]; then
+        score=0
+    elif [[ "$basename" == "Main" ]]; then
+        score=10
+    elif [[ "$basename" == *Application || "$basename" == *App ]]; then
+        score=20
+    elif [[ -n "$(normalized_project_name)" && "$(normalized_class_name "$basename")" == "$(normalized_project_name)" ]]; then
+        score=30
+    elif [[ "$basename" =~ (Test|Tests|Tool|Util|Utils|Helper|Example|Scratch)$ ]]; then
+        score=900
+    else
+        score=100
+    fi
+
+    score=$((score + $(main_candidate_depth "$main_class")))
+    printf '%s' "$score"
+}
+
+rank_main_candidates() {
+    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -lt 2 ]]; then
+        if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 1 ]]; then
+            PLAN_MAIN_CANDIDATE_REASONS=("$(main_candidate_reason "${PLAN_MAIN_CANDIDATES[0]}")")
+        fi
+        return 0
+    fi
+
+    local rows=()
+    local ranked=()
+    local reasons=()
+    local index=0
+    local main_class
+    local row
+    local score original reason candidate
+
+    for main_class in "${PLAN_MAIN_CANDIDATES[@]}"; do
+        rows+=("$(main_candidate_score "$main_class")"$'\t'"$index"$'\t'"$main_class"$'\t'"$(main_candidate_reason "$main_class")")
+        index=$((index + 1))
+    done
+
+    while IFS=$'\t' read -r score original candidate reason; do
+        : "$score" "$original"
+        ranked+=("$candidate")
+        reasons+=("$reason")
+    done < <(printf '%s\n' "${rows[@]}" | sort -n -k1,1 -k2,2)
+
+    PLAN_MAIN_CANDIDATES=("${ranked[@]}")
+    PLAN_MAIN_CANDIDATE_REASONS=("${reasons[@]}")
+}
+
+print_ranked_main_candidates() {
+    local indent="${1:-}"
+    local index
+    local reason
+
+    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 0 ]]; then
+        printf '%snone\n' "$indent"
+        return 0
+    fi
+
+    for index in "${!PLAN_MAIN_CANDIDATES[@]}"; do
+        reason="${PLAN_MAIN_CANDIDATE_REASONS[$index]:-detected public static main method}"
+        printf '%s%d. %s - %s\n' "$indent" "$((index + 1))" "${PLAN_MAIN_CANDIDATES[$index]}" "$reason"
+    done
+}
+
 plan_select_main_class() {
     local requested="$1"
     local source_root="$2"
@@ -1096,6 +1215,7 @@ build_plan() {
             [[ -n "$main_class" ]] && PLAN_MAIN_CANDIDATES+=("$main_class")
         done < <(find_main_classes "$source_root")
     fi
+    rank_main_candidates
 
     first_token="${1:-}"
     if [[ "$#" -gt 0 ]]; then
@@ -1194,6 +1314,12 @@ print_plan_summary() {
         for blocker in "${PLAN_BLOCKERS[@]}"; do
             echo "Blocker: $blocker"
         done
+        if [[ ${#PLAN_MAIN_CANDIDATES[@]} -gt 1 ]]; then
+            echo "Main class candidates:"
+            print_ranked_main_candidates "  "
+            echo "Run one now: jv run $(first_main_candidate)"
+            echo "Make it the default: jv remember main $(first_main_candidate)"
+        fi
     fi
 }
 
@@ -1255,13 +1381,7 @@ print_doctor_report() {
 
     echo ""
     echo "Main class candidates:"
-    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 0 ]]; then
-        echo "  none"
-    else
-        for item in "${PLAN_MAIN_CANDIDATES[@]}"; do
-            echo "  $item"
-        done
-    fi
+    print_ranked_main_candidates "  "
 
     echo ""
     echo "Reasons"
