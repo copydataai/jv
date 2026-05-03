@@ -17,6 +17,16 @@ jv doctor
 
 Use `jv doctor` when JV surprises you. It prints what JV detected, why it selected a main class, which command it would run, and what blocks execution.
 
+## Inspect Recent JV Activity
+
+```bash
+jv history
+jv history --failures
+jv history --json
+```
+
+Use `jv history` to see recent runs from generated `.jv/` memory. `--failures` narrows the view to blocked or failed runs, and `--json` prints normalized records for agents and scripts.
+
 ## Multiple Main Classes
 
 ```bash
