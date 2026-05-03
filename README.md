@@ -112,6 +112,22 @@ jv clean
 
 JV does not require a hand-written config file for normal projects. Source files and build tools are truth; `.jv/` is generated memory. JV writes `.jv/state.json` and `.jv/runs.jsonl` after successful runs so humans and coding agents can inspect what JV detected and executed.
 
+### Agent-Friendly Failures
+
+When `jv run` is blocked or a build/run step fails, JV keeps the original tool output visible and adds a stable failure block:
+
+```text
+JV failure
+Reason: compile_failed
+Action: compile
+Message: javac failed while compiling the selected plain Java project.
+Next action: Fix the compiler errors above, then retry the same JV command.
+Retry command: jv run
+Exit code: 1
+```
+
+Agents can use the stable `Reason`, `Next action`, and `Retry command` lines for repair loops. JV also records blocked and failed run attempts in `.jv/runs.jsonl` when the memory directory is writable.
+
 ---
 
 ## ✨ Features
