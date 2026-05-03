@@ -53,11 +53,15 @@ JV provides a simple CLI wrapper around `javac` and `java` that handles:
 # Quick install (recommended)
 curl -fsSL https://raw.githubusercontent.com/copydataai/jv/main/install.sh | bash
 
+# Choose a custom install location
+JV_INSTALL_DIR="$HOME/bin" bash install.sh
+
 # Or manual installation
 git clone https://github.com/copydataai/jv.git
 cd jv
 chmod +x jv.sh
-sudo ln -s $(pwd)/jv.sh /usr/local/bin/jv
+mkdir -p "$HOME/.local/bin"
+cp jv.sh "$HOME/.local/bin/jv"
 ```
 
 ### Basic Usage
@@ -94,12 +98,15 @@ jv clean
 | `jv compile [ClassName]` | Compile all or specific Java files |
 | `jv run [ClassName] [args...]` | Infer, explain, compile, and run the latest code |
 | `jv explain [ClassName]` | Show the detected build/run plan without running |
-| `jv doctor` | Inspect Java project state and possible entrypoints |
+| `jv doctor [--json]` | Inspect Java project state and possible entrypoints |
 | `jv history [--limit N] [--failures] [--json]` | Show recent JV run history |
 | `jv events [--limit N] [--failures] [--json]` | Alias for `jv history` |
+| `jv retry [--dry-run] [--json]` | Retry the latest failed or blocked JV run |
+| `jv watch [ClassName] [args...]` | Re-run when Java source files change |
 | `jv remember main <ClassName>` | Remember a preferred main class in `.jv/` |
 | `jv forget main` | Remove the remembered main class |
 | `jv clean` | Remove all `.class` files |
+| `jv version` / `jv --version` | Show JV and Java version information |
 | `jv help` | Show usage and available commands |
 
 ---
@@ -107,6 +114,8 @@ jv clean
 ### Inspect The Plan
 
 `jv doctor` shows the same planner model that powers `jv run` and `jv explain`: project shape, source roots, tool availability, selected main class, reasons, warnings, blockers, and `.jv/` memory status.
+
+Use `jv doctor --json` for the same project health model as machine-readable JSON.
 
 ---
 
@@ -137,6 +146,18 @@ Exit code: 1
 ```
 
 Agents can use the stable `Reason`, `Next action`, and `Retry command` lines for repair loops. JV also records blocked and failed run attempts in `.jv/runs.jsonl` when the memory directory is writable.
+
+Use `jv retry` after fixing source code to rerun the latest failed or blocked JV run. `jv retry --dry-run` prints the selected retry command without executing it, and `jv retry --json` emits the same selection as JSON for agents.
+
+Use `jv watch` while editing to run once immediately, then rerun whenever Java source files change.
+
+### Shell Completions
+
+Static completions are available in `completions/` for Bash, Zsh, and Fish. Install the file that matches your shell into the standard completion directory for your environment.
+
+### Packaging
+
+`scripts/release.sh <version>` builds a local release archive under `dist/`. A Homebrew formula template lives at `packaging/homebrew/jv.rb`; maintainers should replace the URL and SHA-256 with real release artifact values before publishing.
 
 ---
 

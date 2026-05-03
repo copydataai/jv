@@ -4,6 +4,7 @@ set -eo pipefail
 
 # JV - Simple Java Wrapper for Daily Tasks
 # Version: 0.1.0
+JV_VERSION="0.1.0"
 
 # Initialize colors as empty
 RED=''
@@ -42,6 +43,7 @@ PLAN_BUILD_KIND=""
 PLAN_RUN_KIND=""
 PLAN_REQUIRED_TOOLS=()
 PLAN_MAIN_CANDIDATES=()
+PLAN_MAIN_CANDIDATE_REASONS=()
 PLAN_REASONS=()
 PLAN_WARNINGS=()
 PLAN_BLOCKERS=()
@@ -54,6 +56,7 @@ EVENT_RUN_ID=""
 EVENT_SEQUENCE=0
 EVENT_COMMAND_NAME=""
 EVENT_COMMAND_ARGV=()
+RETRY_RUN_ARGS=()
 
 # Helper functions
 error() {
@@ -139,6 +142,7 @@ reset_plan() {
     PLAN_RUN_KIND=""
     PLAN_REQUIRED_TOOLS=()
     PLAN_MAIN_CANDIDATES=()
+    PLAN_MAIN_CANDIDATE_REASONS=()
     PLAN_REASONS=()
     PLAN_WARNINGS=()
     PLAN_BLOCKERS=()
@@ -629,9 +633,11 @@ show_help() {
     echo -e "  ${GREEN}create${NC} <project-name> [package]  Create a new Java project (mkdir + init)"
     echo -e "  ${GREEN}init${NC}                          Initialize project in current directory"
     echo -e "  ${GREEN}explain${NC} [ClassName]           Show the detected build/run plan without running"
-    echo -e "  ${GREEN}doctor${NC}                       Inspect Java project state and possible entrypoints"
+    echo -e "  ${GREEN}doctor${NC} [--json]              Inspect Java project state and possible entrypoints"
     echo -e "  ${GREEN}history${NC} [--limit N] [--failures] [--json]  Show recent JV run history"
     echo -e "  ${GREEN}events${NC} [--limit N] [--failures] [--json]   Alias for history"
+    echo -e "  ${GREEN}retry${NC} [--dry-run] [--json]     Retry the latest failed or blocked JV run"
+    echo -e "  ${GREEN}watch${NC} [ClassName] [args...]   Re-run when Java source files change"
     echo -e "  ${GREEN}compile${NC} [ClassName]           Compile Java files (all or specific)"
     echo -e "  ${GREEN}run${NC} [ClassName] [args...]     Infer, explain, compile, and run"
     echo -e "  ${GREEN}remember${NC} main <ClassName>      Remember a preferred main class in .jv/"
@@ -648,6 +654,8 @@ show_help() {
     echo -e "  jv explain                            # Show what JV would do"
     echo -e "  jv doctor                             # Inspect detected project state"
     echo -e "  jv history                            # Show recent JV runs"
+    echo -e "  jv retry                              # Retry latest failed JV run"
+    echo -e "  jv watch                              # Re-run on Java source changes"
     echo -e "  jv compile                            # Compile all Java files"
     echo -e "  jv run ie.atu.sw.Main                # Run main class"
     echo -e "  jv run ie.atu.sw.Main arg1 arg2      # Run with arguments"
@@ -664,8 +672,12 @@ show_help() {
 
 # Show version
 show_version() {
-    echo -e "jv version 0.1.0"
-    java -version 2>&1 | head -n 1
+    echo -e "jv $JV_VERSION (bash)"
+    if command -v java >/dev/null 2>&1; then
+        java -version 2>&1 | head -n 1
+    else
+        warn "Java is not installed"
+    fi
 }
 
 # Initialize project structure
@@ -920,6 +932,123 @@ plan_main_candidates_csv() {
     printf '%s' "$candidates"
 }
 
+main_class_basename() {
+    local main_class="$1"
+    printf '%s' "${main_class##*.}"
+}
+
+normalized_project_name() {
+    local name
+    name="$(basename "$PWD")"
+    printf '%s' "$name" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]'
+}
+
+normalized_class_name() {
+    local name="$1"
+    printf '%s' "$name" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]'
+}
+
+main_candidate_depth() {
+    local main_class="$1"
+    local dots="${main_class//[^.]}"
+    printf '%s' "${#dots}"
+}
+
+main_candidate_reason() {
+    local main_class="$1"
+    local basename
+    local normalized_project
+    local normalized_class
+    basename="$(main_class_basename "$main_class")"
+    normalized_project="$(normalized_project_name)"
+    normalized_class="$(normalized_class_name "$basename")"
+
+    if [[ -n "$PLAN_LAST_SUCCESSFUL_MAIN" && "$main_class" == "$PLAN_LAST_SUCCESSFUL_MAIN" ]]; then
+        printf 'last successful main in this project'
+    elif [[ "$basename" == "Main" ]]; then
+        printf 'conventional Java entrypoint'
+    elif [[ "$basename" == *Application || "$basename" == *App ]]; then
+        printf 'class name looks like an application entrypoint'
+    elif [[ -n "$normalized_project" && "$normalized_class" == "$normalized_project" ]]; then
+        printf 'class name matches the project directory'
+    elif [[ "$basename" =~ (Test|Tests|Tool|Util|Utils|Helper|Example|Scratch)$ ]]; then
+        printf 'utility or example-looking entrypoint'
+    else
+        printf 'detected public static main method'
+    fi
+}
+
+main_candidate_score() {
+    local main_class="$1"
+    local basename
+    local score=500
+    basename="$(main_class_basename "$main_class")"
+
+    if [[ -n "$PLAN_LAST_SUCCESSFUL_MAIN" && "$main_class" == "$PLAN_LAST_SUCCESSFUL_MAIN" ]]; then
+        score=0
+    elif [[ "$basename" == "Main" ]]; then
+        score=10
+    elif [[ "$basename" == *Application || "$basename" == *App ]]; then
+        score=20
+    elif [[ -n "$(normalized_project_name)" && "$(normalized_class_name "$basename")" == "$(normalized_project_name)" ]]; then
+        score=30
+    elif [[ "$basename" =~ (Test|Tests|Tool|Util|Utils|Helper|Example|Scratch)$ ]]; then
+        score=900
+    else
+        score=100
+    fi
+
+    score=$((score + $(main_candidate_depth "$main_class")))
+    printf '%s' "$score"
+}
+
+rank_main_candidates() {
+    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -lt 2 ]]; then
+        if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 1 ]]; then
+            PLAN_MAIN_CANDIDATE_REASONS=("$(main_candidate_reason "${PLAN_MAIN_CANDIDATES[0]}")")
+        fi
+        return 0
+    fi
+
+    local rows=()
+    local ranked=()
+    local reasons=()
+    local index=0
+    local main_class
+    local row
+    local score original reason candidate
+
+    for main_class in "${PLAN_MAIN_CANDIDATES[@]}"; do
+        rows+=("$(main_candidate_score "$main_class")"$'\t'"$index"$'\t'"$main_class"$'\t'"$(main_candidate_reason "$main_class")")
+        index=$((index + 1))
+    done
+
+    while IFS=$'\t' read -r score original candidate reason; do
+        : "$score" "$original"
+        ranked+=("$candidate")
+        reasons+=("$reason")
+    done < <(printf '%s\n' "${rows[@]}" | sort -n -k1,1 -k2,2)
+
+    PLAN_MAIN_CANDIDATES=("${ranked[@]}")
+    PLAN_MAIN_CANDIDATE_REASONS=("${reasons[@]}")
+}
+
+print_ranked_main_candidates() {
+    local indent="${1:-}"
+    local index
+    local reason
+
+    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 0 ]]; then
+        printf '%snone\n' "$indent"
+        return 0
+    fi
+
+    for index in "${!PLAN_MAIN_CANDIDATES[@]}"; do
+        reason="${PLAN_MAIN_CANDIDATE_REASONS[$index]:-detected public static main method}"
+        printf '%s%d. %s - %s\n' "$indent" "$((index + 1))" "${PLAN_MAIN_CANDIDATES[$index]}" "$reason"
+    done
+}
+
 plan_select_main_class() {
     local requested="$1"
     local source_root="$2"
@@ -1093,6 +1222,7 @@ build_plan() {
             [[ -n "$main_class" ]] && PLAN_MAIN_CANDIDATES+=("$main_class")
         done < <(find_main_classes "$source_root")
     fi
+    rank_main_candidates
 
     first_token="${1:-}"
     if [[ "$#" -gt 0 ]]; then
@@ -1191,6 +1321,12 @@ print_plan_summary() {
         for blocker in "${PLAN_BLOCKERS[@]}"; do
             echo "Blocker: $blocker"
         done
+        if [[ ${#PLAN_MAIN_CANDIDATES[@]} -gt 1 ]]; then
+            echo "Main class candidates:"
+            print_ranked_main_candidates "  "
+            echo "Run one now: jv run $(first_main_candidate)"
+            echo "Make it the default: jv remember main $(first_main_candidate)"
+        fi
     fi
 }
 
@@ -1252,13 +1388,7 @@ print_doctor_report() {
 
     echo ""
     echo "Main class candidates:"
-    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -eq 0 ]]; then
-        echo "  none"
-    else
-        for item in "${PLAN_MAIN_CANDIDATES[@]}"; do
-            echo "  $item"
-        done
-    fi
+    print_ranked_main_candidates "  "
 
     echo ""
     echo "Reasons"
@@ -1310,7 +1440,131 @@ print_doctor_report() {
     fi
 }
 
+json_nullable_string() {
+    local value="$1"
+    if [[ -z "$value" ]]; then
+        printf 'null'
+    else
+        printf '"%s"' "$(json_escape "$value")"
+    fi
+}
+
+plan_status_json_value() {
+    if [[ ${#PLAN_BLOCKERS[@]} -gt 0 ]]; then
+        printf 'blocked'
+    elif [[ ${#PLAN_WARNINGS[@]} -gt 0 ]]; then
+        printf 'warn'
+    else
+        printf 'ok'
+    fi
+}
+
+source_roots_json() {
+    if [[ -z "$PLAN_SOURCE_ROOT" ]]; then
+        printf '[]'
+        return 0
+    fi
+
+    printf '[{"path":"%s","exists":%s,"role":"%s","reason":"%s"}]' \
+        "$(json_escape "$PLAN_SOURCE_ROOT")" \
+        "$(json_bool "$([[ -d "$PLAN_SOURCE_ROOT" ]] && printf true || printf false)")" \
+        "$(json_escape "$PLAN_SHAPE-source")" \
+        "$(json_escape "$PLAN_SOURCE_ROOT_REASON")"
+}
+
+tool_json_for_doctor() {
+    local tool="$1"
+    local required="false"
+    local available="false"
+    local path=""
+    local version=""
+
+    if tool_is_required "$tool"; then
+        required="true"
+    fi
+    if command -v "$tool" >/dev/null 2>&1; then
+        available="true"
+        path="$(command -v "$tool")"
+        version="$(tool_version "$tool")"
+    fi
+
+    printf '{"name":"%s","required":%s,"available":%s,"path":%s,"version":%s}' \
+        "$(json_escape "$tool")" \
+        "$(json_bool "$required")" \
+        "$(json_bool "$available")" \
+        "$(json_nullable_string "$path")" \
+        "$(json_nullable_string "$version")"
+}
+
+tools_json_for_doctor() {
+    printf '[%s,%s,%s]' "$(tool_json_for_doctor java)" "$(tool_json_for_doctor javac)" "$(tool_json_for_doctor mvn)"
+}
+
+doctor_next_action_json() {
+    if [[ ${#PLAN_BLOCKERS[@]} -eq 0 ]]; then
+        printf 'null'
+        return 0
+    fi
+
+    local reason
+    local retry
+    reason="$(failure_reason_for_blocker "${PLAN_BLOCKERS[0]}")"
+    retry="$(retry_command_for_current_run "${PLAN_RUN_ARGS[@]}")"
+    printf '"%s"' "$(json_escape "$(next_action_for_reason "$reason" "$retry")")"
+}
+
+print_doctor_json_report() {
+    local status
+    status="$(plan_status_json_value)"
+
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "command": %s,\n' "$(event_command_json)"
+    printf '  "cwd": "%s",\n' "$(json_escape "$PWD")"
+    printf '  "status": "%s",\n' "$(json_escape "$status")"
+    echo '  "project": {'
+    printf '    "shape": "%s",\n' "$(json_escape "$PLAN_SHAPE")"
+    printf '    "shapeReason": %s,\n' "$(json_nullable_string "$PLAN_SHAPE_REASON")"
+    printf '    "sourceRoots": %s\n' "$(source_roots_json)"
+    echo '  },'
+    printf '  "tools": %s,\n' "$(tools_json_for_doctor)"
+    echo '  "main": {'
+    printf '    "selected": %s,\n' "$(json_nullable_string "$PLAN_SELECTED_MAIN")"
+    printf '    "selectedSource": %s,\n' "$(json_nullable_string "$PLAN_SELECTED_MAIN_SOURCE")"
+    printf '    "selectedReason": %s,\n' "$(json_nullable_string "$PLAN_SELECTED_MAIN_REASON")"
+    printf '    "candidates": %s\n' "$(json_array_from_lines "${PLAN_MAIN_CANDIDATES[@]}")"
+    echo '  },'
+    echo '  "plan": {'
+    echo '    "build": {'
+    printf '      "kind": %s,\n' "$(json_nullable_string "$PLAN_BUILD_KIND")"
+    printf '      "display": %s,\n' "$(json_nullable_string "$PLAN_BUILD_DISPLAY")"
+    printf '      "runnable": %s\n' "$(json_bool "$([[ -n "$PLAN_BUILD_DISPLAY" && ${#PLAN_BLOCKERS[@]} -eq 0 ]] && printf true || printf false)")"
+    echo '    },'
+    echo '    "run": {'
+    printf '      "kind": %s,\n' "$(json_nullable_string "$PLAN_RUN_KIND")"
+    printf '      "display": %s,\n' "$(json_nullable_string "$PLAN_RUN_DISPLAY")"
+    printf '      "args": %s,\n' "$(json_array_from_lines "${PLAN_RUN_ARGS[@]}")"
+    printf '      "runnable": %s\n' "$(json_bool "$([[ -n "$PLAN_RUN_DISPLAY" && ${#PLAN_BLOCKERS[@]} -eq 0 ]] && printf true || printf false)")"
+    echo '    }'
+    echo '  },'
+    echo '  "memory": {'
+    printf '    "state": "%s",\n' "$(json_escape "$PLAN_MEMORY_STATE")"
+    printf '    "statePath": "%s",\n' "$(json_escape "$JV_STATE")"
+    printf '    "runsPath": "%s",\n' "$(json_escape "$JV_RUNS")"
+    printf '    "rememberedMainClass": %s,\n' "$(json_nullable_string "$PLAN_REMEMBERED_MAIN")"
+    printf '    "lastSuccessfulMainClass": %s,\n' "$(json_nullable_string "$PLAN_LAST_SUCCESSFUL_MAIN")"
+    printf '    "lastRun": %s\n' "$(json_nullable_string "$PLAN_LAST_RUN_SUMMARY")"
+    echo '  },'
+    printf '  "reasons": %s,\n' "$(json_array_from_lines "${PLAN_REASONS[@]}")"
+    printf '  "warnings": %s,\n' "$(json_array_from_lines "${PLAN_WARNINGS[@]}")"
+    printf '  "blockers": %s,\n' "$(json_array_from_lines "${PLAN_BLOCKERS[@]}")"
+    printf '  "nextAction": %s\n' "$(doctor_next_action_json)"
+    echo "}"
+}
+
 doctor_project() {
+    local json_mode="${1:-0}"
+
     build_plan
     if ! emit_environment_event || ! emit_plan_event; then
         warn "Could not write JV events to $JV_RUNS"
@@ -1319,6 +1573,10 @@ doctor_project() {
         if ! emit_blockers_event; then
             warn "Could not write JV events to $JV_RUNS"
         fi
+    fi
+    if [[ "$json_mode" -eq 1 ]]; then
+        print_doctor_json_report
+        return 0
     fi
     print_doctor_report
 }
@@ -1666,6 +1924,239 @@ show_history() {
     fi
 }
 
+retry_render_empty_json() {
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    echo '  "found": false,'
+    echo '  "reason": null,'
+    echo '  "status": null,'
+    echo '  "retryCommand": null,'
+    echo '  "runId": null,'
+    echo '  "eventType": null'
+    echo "}"
+}
+
+retry_render_selection_json() {
+    local reason="$1"
+    local status="$2"
+    local retry_command="$3"
+    local run_id="$4"
+    local event_type="$5"
+
+    echo "{"
+    echo '  "schemaVersion": 1,'
+    printf '  "source": "%s",\n' "$(json_escape "$JV_RUNS")"
+    echo '  "found": true,'
+    printf '  "reason": "%s",\n' "$(json_escape "$reason")"
+    printf '  "status": "%s",\n' "$(json_escape "$status")"
+    printf '  "retryCommand": "%s",\n' "$(json_escape "$retry_command")"
+    printf '  "runId": "%s",\n' "$(json_escape "$run_id")"
+    printf '  "eventType": "%s"\n' "$(json_escape "$event_type")"
+    echo "}"
+}
+
+retry_find_latest_candidate() {
+    [[ -f "$JV_RUNS" ]] || return 1
+
+    local lines=()
+    local line
+    local index
+    while IFS= read -r line; do
+        lines+=("$line")
+    done < "$JV_RUNS"
+
+    for ((index=${#lines[@]} - 1; index >= 0; index--)); do
+        line="${lines[$index]}"
+        history_line_looks_like_json_object "$line" || continue
+
+        local event_type
+        local payload_event
+        local reason
+        local retry_command
+        local run_id
+        local status
+
+        event_type="$(history_extract_json_string "eventType" "$line")"
+        [[ "$event_type" == "failure" ]] || continue
+
+        retry_command="$(history_extract_json_string "retryCommand" "$line")"
+        [[ -n "$retry_command" ]] || continue
+
+        payload_event="$(history_extract_json_string "event" "$line")"
+        reason="$(history_extract_json_string "reason" "$line")"
+        run_id="$(history_extract_json_string "runId" "$line")"
+        case "$payload_event" in
+            blocked) status="blocked" ;;
+            failed) status="failure" ;;
+            *) status="$(history_extract_json_string "status" "$line")" ;;
+        esac
+        [[ -n "$status" ]] || status="failure"
+        [[ -n "$reason" ]] || reason="-"
+        [[ -n "$run_id" ]] || run_id="-"
+
+        printf '%s\t%s\t%s\t%s\t%s\n' "$reason" "$status" "$retry_command" "$run_id" "$event_type"
+        return 0
+    done
+
+    return 1
+}
+
+retry_command_to_run_args() {
+    local retry_command="$1"
+    RETRY_RUN_ARGS=()
+
+    local tokens=()
+    local token
+    # shellcheck disable=SC2206
+    tokens=($retry_command)
+
+    if [[ ${#tokens[@]} -lt 2 || "${tokens[0]}" != "jv" || "${tokens[1]}" != "run" ]]; then
+        return 1
+    fi
+
+    for token in "${tokens[@]:2}"; do
+        if [[ ! "$token" =~ ^[A-Za-z0-9._/@:+,=-]+$ ]]; then
+            return 1
+        fi
+        RETRY_RUN_ARGS+=("$token")
+    done
+}
+
+show_retry() {
+    local dry_run=0
+    local json_mode=0
+    local arg
+    local candidate
+    local reason status retry_command run_id event_type
+
+    while [[ $# -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+            --dry-run)
+                dry_run=1
+                ;;
+            --json)
+                json_mode=1
+                dry_run=1
+                ;;
+            *)
+                error "Usage: jv retry [--dry-run] [--json]"
+                ;;
+        esac
+        shift
+    done
+
+    if ! candidate="$(retry_find_latest_candidate)"; then
+        if [[ $json_mode -eq 1 ]]; then
+            retry_render_empty_json
+        else
+            echo "JV retry"
+            echo "Source: $JV_RUNS"
+            echo ""
+            echo "No failed or blocked JV run found. Run \`jv history --failures\` to inspect failures."
+        fi
+        return 1
+    fi
+
+    IFS=$'\t' read -r reason status retry_command run_id event_type <<<"$candidate"
+
+    if ! retry_command_to_run_args "$retry_command"; then
+        if [[ $json_mode -eq 1 ]]; then
+            retry_render_selection_json "$reason" "$status" "$retry_command" "$run_id" "$event_type"
+        else
+            echo "JV retry"
+            echo "Source: $JV_RUNS"
+            echo "Reason: $reason"
+            echo "Retry command: $retry_command"
+            echo ""
+            echo "Unsafe retry command. JV retry only accepts stored commands shaped like: jv run [args...]"
+        fi
+        return 1
+    fi
+
+    if [[ $json_mode -eq 1 ]]; then
+        retry_render_selection_json "$reason" "$status" "$retry_command" "$run_id" "$event_type"
+        return 0
+    fi
+
+    echo "JV retry"
+    echo "Source: $JV_RUNS"
+    echo "Reason: $reason"
+    echo "Retry command: $retry_command"
+    echo ""
+
+    if [[ $dry_run -eq 1 ]]; then
+        return 0
+    fi
+
+    run_java "${RETRY_RUN_ARGS[@]}"
+}
+
+source_snapshot() {
+    local source_root="$1"
+    local file
+    [[ -d "$source_root" ]] || return 0
+
+    while IFS= read -r -d '' file; do
+        printf '%s\t' "$file"
+        cksum "$file"
+    done < <(find "$source_root" -name "*.java" -print0 2>/dev/null | sort -z)
+}
+
+source_snapshot_checksum() {
+    local source_root="$1"
+    source_snapshot "$source_root" | cksum
+}
+
+watch_wait_for_change() {
+    local source_root="$1"
+    local previous="$2"
+    local current
+
+    while true; do
+        sleep "${JV_WATCH_INTERVAL:-1}"
+        current="$(source_snapshot_checksum "$source_root")"
+        [[ "$current" != "$previous" ]] && return 0
+    done
+}
+
+watch_project() {
+    local args=("$@")
+    local source_root
+    local snapshot
+    local retry
+
+    trap 'echo ""; info "Stopped watch mode"; exit 130' INT TERM
+
+    info "Watching Java sources. Press Ctrl-C to stop."
+    run_java "${args[@]}" || true
+
+    source_root="$PLAN_SOURCE_ROOT"
+    if [[ -z "$source_root" || ! -d "$source_root" ]]; then
+        error "No source root available to watch."
+    fi
+
+    snapshot="$(source_snapshot_checksum "$source_root")"
+    info "Watch ready."
+
+    while true; do
+        watch_wait_for_change "$source_root" "$snapshot"
+        echo ""
+        retry="$(retry_command_for_current_run "${args[@]}")"
+        info "Change detected. Re-running $retry..."
+        if [[ "$PLAN_SHAPE" == "plain-java" ]]; then
+            rm -rf "$BIN_DIR"
+        fi
+        run_java "${args[@]}" || true
+
+        if [[ -n "$PLAN_SOURCE_ROOT" && -d "$PLAN_SOURCE_ROOT" ]]; then
+            source_root="$PLAN_SOURCE_ROOT"
+        fi
+        snapshot="$(source_snapshot_checksum "$source_root")"
+    done
+}
+
 # Compile Java files
 compile_java() {
     check_java
@@ -1713,6 +2204,34 @@ compile_for_run_or_fail() {
     fi
 
     success "Compilation successful"
+}
+
+compile_java_with_events() {
+    local compile_display
+    local compile_status
+
+    compile_display="javac -d $BIN_DIR -cp $(build_classpath) <sources>"
+
+    if ! emit_execution_start_event "compile" "javac" "$compile_display"; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
+
+    set +e
+    compile_java "$@"
+    compile_status=$?
+    set -e
+
+    if [[ $compile_status -eq 0 ]]; then
+        if ! emit_execution_result_event "compile" "javac" "$compile_display" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
+        return 0
+    fi
+
+    if ! emit_execution_result_event "compile" "javac" "$compile_display" "failure" "$compile_status" "compile-failure"; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
+    return "$compile_status"
 }
 
 # Run Java program
@@ -1902,10 +2421,13 @@ main() {
             explain_project "$@"
             ;;
         doctor)
-            if [[ $# -ne 0 ]]; then
-                error "Usage: jv doctor"
+            if [[ $# -eq 0 ]]; then
+                doctor_project 0
+            elif [[ $# -eq 1 && "${1:-}" == "--json" ]]; then
+                doctor_project 1
+            else
+                error "Usage: jv doctor [--json]"
             fi
-            doctor_project
             ;;
         history)
             show_history "$@"
@@ -1913,8 +2435,14 @@ main() {
         events)
             show_history "$@"
             ;;
+        retry)
+            show_retry "$@"
+            ;;
+        watch)
+            watch_project "$@"
+            ;;
         compile)
-            compile_java "$@"
+            compile_java_with_events "$@"
             ;;
         run)
             run_java "$@"
@@ -1934,7 +2462,7 @@ main() {
         clean)
             clean_project
             ;;
-        version)
+        version|--version|-v)
             show_version
             ;;
         help|--help|-h)

@@ -116,6 +116,30 @@ assert_jsonl_event_count_at_least() {
     fi
 }
 
+wait_for_output() {
+    local file="$1"
+    local needle="$2"
+    local attempts="${3:-100}"
+
+    while [[ $attempts -gt 0 ]]; do
+        if [[ -f "$file" ]] && grep -Fq "$needle" "$file"; then
+            return 0
+        fi
+        sleep 0.1
+        attempts=$((attempts - 1))
+    done
+
+    echo "Timed out waiting for: $needle" >&2
+    [[ -f "$file" ]] && cat "$file" >&2
+    exit 1
+}
+
+stop_process() {
+    local pid="$1"
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" >/dev/null 2>&1 || true
+}
+
 setup_tmp() {
     cleanup_tmp
     TMP_ROOT="$(mktemp -d)"
@@ -236,6 +260,10 @@ JAVA
     assert_contains "$output" "com.example.App"
     assert_contains "$output" "com.example.Tool"
     assert_contains "$output" "jv run <MainClass>"
+    assert_contains "$output" "Main class candidates:"
+    assert_contains "$output" "1. com.example.App - class name looks like an application entrypoint"
+    assert_contains "$output" "2. com.example.Tool - utility or example-looking entrypoint"
+    assert_contains "$output" "Run one now: jv run com.example.App"
 }
 
 test_run_writes_blocker_event_without_execution_start() {
@@ -346,6 +374,7 @@ JAVA
     assert_contains "$output" "com.example.App"
     assert_contains "$output" "com.example.Tool"
     assert_contains "$output" "jv run <MainClass>"
+    assert_contains "$output" "1. com.example.App - class name looks like an application entrypoint"
 }
 
 test_run_ignores_commented_plain_main_signatures() {
@@ -631,6 +660,67 @@ JAVA
     assert_contains "$(cat "$events")" '"summary":"Plan selected Main from explicit main class argument"'
 }
 
+test_compile_writes_schema_v1_events_on_success() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("compile events");
+    }
+}
+JAVA
+
+    "$JV" compile >/dev/null
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "execution_start"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_contains "$(cat "$events")" '"command":{"name":"compile","argv":["jv","compile"]}'
+    assert_contains "$(cat "$events")" '"phase":"compile"'
+    assert_contains "$(cat "$events")" '"status":"success"'
+    assert_contains "$(cat "$events")" '"classification":"completed"'
+    assert_not_contains "$(cat "$events")" '"event":"executed"'
+}
+
+test_compile_writes_schema_v1_events_on_failure() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        MissingType value = null;
+        System.out.println(value);
+    }
+}
+JAVA
+
+    local output
+    local status
+    set +e
+    output="$("$JV" compile 2>&1)"
+    status=$?
+    set -e
+
+    [[ "$status" -ne 0 ]] || fail "Expected jv compile to fail"
+    assert_contains "$output" "cannot find symbol"
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "execution_start"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_contains "$(cat "$events")" '"command":{"name":"compile","argv":["jv","compile"]}'
+    assert_contains "$(cat "$events")" '"phase":"compile"'
+    assert_contains "$(cat "$events")" '"status":"failure"'
+    assert_contains "$(cat "$events")" '"classification":"compile-failure"'
+    assert_not_contains "$(cat "$events")" '"event":"executed"'
+}
+
 test_run_appends_v1_events_after_legacy_and_corrupt_lines() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/.jv"
@@ -902,6 +992,119 @@ JSONL
     if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$output" | jq -e '.records[0].status == "success"' >/dev/null
     fi
+}
+
+test_retry_missing_history_is_empty_state_and_side_effect_free() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    local status
+    set +e
+    output="$("$JV" retry 2>&1)"
+    status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_contains "$output" "JV retry"
+    assert_contains "$output" "No failed or blocked JV run found"
+    assert_not_exists "$TMP_ROOT/app/.jv"
+}
+
+test_retry_dry_run_selects_latest_failure() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{bad json
+{"schemaVersion":1,"eventType":"failure","runId":"run_old","sequence":1,"timestamp":"2026-05-03T00:00:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"old","payload":{"event":"failed","action":"compile","reason":"compile_failed","retryCommand":"jv run Old","exitCode":1}}
+{"schemaVersion":1,"eventType":"failure","runId":"run_new","sequence":1,"timestamp":"2026-05-03T00:01:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"new","payload":{"event":"blocked","action":"run","reason":"main_ambiguous","retryCommand":"jv run App","exitCode":1}}
+JSONL
+
+    local output
+    output="$("$JV" retry --dry-run)"
+
+    assert_contains "$output" "JV retry"
+    assert_contains "$output" "Reason: main_ambiguous"
+    assert_contains "$output" "Retry command: jv run App"
+    assert_not_exists "$TMP_ROOT/app/bin"
+}
+
+test_retry_json_outputs_selection_without_executing() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"schemaVersion":1,"eventType":"failure","runId":"run_123","sequence":1,"timestamp":"2026-05-03T00:00:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"failed","payload":{"event":"failed","action":"compile","reason":"compile_failed","retryCommand":"jv run Main alpha","exitCode":1}}
+JSONL
+
+    local output
+    output="$("$JV" retry --json)"
+
+    assert_contains "$output" '"schemaVersion": 1'
+    assert_contains "$output" '"found": true'
+    assert_contains "$output" '"reason": "compile_failed"'
+    assert_contains "$output" '"retryCommand": "jv run Main alpha"'
+    assert_not_exists "$TMP_ROOT/app/bin"
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.found == true and .retryCommand == "jv run Main alpha"' >/dev/null
+    fi
+}
+
+test_retry_rejects_unsafe_retry_command() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"schemaVersion":1,"eventType":"failure","runId":"run_123","sequence":1,"timestamp":"2026-05-03T00:00:00Z","cwd":"/tmp/app","command":{"name":"run","argv":["jv","run"]},"summary":"failed","payload":{"event":"failed","action":"compile","reason":"compile_failed","retryCommand":"rm -rf /","exitCode":1}}
+JSONL
+
+    local output
+    local status
+    set +e
+    output="$("$JV" retry 2>&1)"
+    status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_contains "$output" "Unsafe retry command"
+}
+
+test_retry_executes_compile_failure_after_fix() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        MissingType value = null;
+        System.out.println(value);
+    }
+}
+JAVA
+
+    set +e
+    "$JV" run Main alpha >/dev/null 2>&1
+    local first_status=$?
+    set -e
+    [[ "$first_status" -ne 0 ]] || fail "Expected initial run to fail"
+
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("retry fixed " + args[0]);
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" retry)"
+
+    assert_contains "$output" "JV retry"
+    assert_contains "$output" "Reason: compile_failed"
+    assert_contains "$output" "Retry command: jv run Main alpha"
+    assert_contains "$output" "retry fixed alpha"
 }
 
 test_run_escapes_control_characters_in_memory_json() {
@@ -1519,8 +1722,8 @@ JAVA
 
     assert_contains "$output" "Blockers"
     assert_contains "$output" "Multiple main classes found"
-    assert_contains "$output" "App"
-    assert_contains "$output" "Tool"
+    assert_contains "$output" "1. App - class name looks like an application entrypoint"
+    assert_contains "$output" "2. Tool - utility or example-looking entrypoint"
 }
 
 test_doctor_reports_unknown_project_as_blocker() {
@@ -1537,14 +1740,139 @@ test_doctor_reports_unknown_project_as_blocker() {
     assert_contains "$output" "No Java project detected"
 }
 
+test_doctor_json_reports_plain_project() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("doctor json");
+    }
+}
+JAVA
+
+    local output
+    output="$("$JV" doctor --json)"
+
+    assert_contains "$output" '"schemaVersion": 1'
+    assert_contains "$output" '"status": "ok"'
+    assert_contains "$output" '"shape": "plain-java"'
+    assert_contains "$output" '"selected": "Main"'
+    assert_contains "$output" '"blockers": []'
+    assert_not_exists "$TMP_ROOT/app/bin"
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.status == "ok" and .main.selected == "Main"' >/dev/null
+    fi
+}
+
+test_doctor_json_reports_ambiguous_project() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {}
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {}
+}
+JAVA
+
+    local output
+    local status
+    set +e
+    output="$("$JV" doctor --json)"
+    status=$?
+    set -e
+
+    assert_status "$status" 0
+    assert_contains "$output" '"status": "blocked"'
+    assert_contains "$output" '"App"'
+    assert_contains "$output" '"Tool"'
+    assert_contains "$output" 'Multiple main classes found'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.status == "blocked" and (.main.candidates | length) == 2' >/dev/null
+    fi
+}
+
+test_doctor_json_reports_unknown_project() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    output="$("$JV" doctor --json)"
+
+    assert_contains "$output" '"status": "blocked"'
+    assert_contains "$output" '"shape": "unknown"'
+    assert_contains "$output" 'No Java project detected'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.status == "blocked" and .project.shape == "unknown"' >/dev/null
+    fi
+}
+
+test_doctor_json_rejects_extra_args() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    local output
+    local status
+    set +e
+    output="$("$JV" doctor --json extra 2>&1)"
+    status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_contains "$output" "Usage: jv doctor [--json]"
+}
+
+test_watch_reruns_when_java_source_changes() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("watch version 1");
+    }
+}
+JAVA
+
+    JV_WATCH_INTERVAL=0.1 "$JV" watch >"$TMP_ROOT/watch.out" 2>&1 &
+    local watch_pid=$!
+    trap 'stop_process "$watch_pid"; cleanup_tmp' EXIT
+
+    wait_for_output "$TMP_ROOT/watch.out" "watch version 1"
+    wait_for_output "$TMP_ROOT/watch.out" "Watch ready."
+
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("watch version 2");
+    }
+}
+JAVA
+
+    wait_for_output "$TMP_ROOT/watch.out" "watch version 2"
+    stop_process "$watch_pid"
+    trap cleanup_tmp EXIT
+}
+
 test_help_lists_diagnostics_commands() {
     local output
     output="$("$JV" help)"
 
     assert_contains "$output" "explain [ClassName]           Show the detected build/run plan without running"
-    assert_contains "$output" "doctor                       Inspect Java project state and possible entrypoints"
+    assert_contains "$output" "doctor [--json]              Inspect Java project state and possible entrypoints"
     assert_contains "$output" "history [--limit N] [--failures] [--json]  Show recent JV run history"
     assert_contains "$output" "events [--limit N] [--failures] [--json]   Alias for history"
+    assert_contains "$output" "retry [--dry-run] [--json]     Retry the latest failed or blocked JV run"
+    assert_contains "$output" "watch [ClassName] [args...]   Re-run when Java source files change"
     assert_contains "$output" "run [ClassName] [args...]     Infer, explain, compile, and run"
     assert_contains "$output" "remember main <ClassName>      Remember a preferred main class in .jv/"
     assert_contains "$output" "forget main                    Remove the remembered main class"
@@ -1554,6 +1882,36 @@ test_help_lists_diagnostics_commands() {
     assert_contains "$output" "jv explain                            # Show what JV would do"
     assert_contains "$output" "jv doctor                             # Inspect detected project state"
     assert_contains "$output" "jv history                            # Show recent JV runs"
+    assert_contains "$output" "jv retry                              # Retry latest failed JV run"
+    assert_contains "$output" "jv watch                              # Re-run on Java source changes"
+}
+
+test_version_prints_cli_version() {
+    local output
+    output="$("$JV" version)"
+
+    assert_contains "$output" "jv 0.1.0 (bash)"
+}
+
+test_dash_dash_version_matches_version() {
+    local version_output
+    local flag_output
+
+    version_output="$("$JV" version)"
+    flag_output="$("$JV" --version)"
+
+    [[ "$version_output" == "$flag_output" ]] || fail "Expected --version to match version"
+}
+
+test_install_script_installs_to_custom_dir() {
+    setup_tmp
+    cd "$ROOT_DIR"
+
+    JV_INSTALL_DIR="$TMP_ROOT/bin" bash "$ROOT_DIR/install.sh" >"$TMP_ROOT/install.out"
+
+    assert_exists "$TMP_ROOT/bin/jv"
+    [[ -x "$TMP_ROOT/bin/jv" ]] || fail "Expected installed jv to be executable"
+    assert_contains "$("$TMP_ROOT/bin/jv" version)" "jv 0.1.0 (bash)"
 }
 
 test_explain_shows_reasons_and_no_side_effects() {
@@ -1674,6 +2032,8 @@ main() {
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
     test_run_writes_agent_grade_event_schema
+    test_compile_writes_schema_v1_events_on_success
+    test_compile_writes_schema_v1_events_on_failure
     test_run_appends_v1_events_after_legacy_and_corrupt_lines
     test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit
@@ -1688,6 +2048,11 @@ main() {
     test_history_renders_mixed_legacy_and_future_events
     test_history_skips_corrupt_jsonl_lines
     test_history_json_outputs_normalized_records
+    test_retry_missing_history_is_empty_state_and_side_effect_free
+    test_retry_dry_run_selects_latest_failure
+    test_retry_json_outputs_selection_without_executing
+    test_retry_rejects_unsafe_retry_command
+    test_retry_executes_compile_failure_after_fix
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
@@ -1709,7 +2074,15 @@ main() {
     test_doctor_rejects_extra_args
     test_doctor_reports_ambiguous_main_as_blocker
     test_doctor_reports_unknown_project_as_blocker
+    test_doctor_json_reports_plain_project
+    test_doctor_json_reports_ambiguous_project
+    test_doctor_json_reports_unknown_project
+    test_doctor_json_rejects_extra_args
+    test_watch_reruns_when_java_source_changes
     test_help_lists_diagnostics_commands
+    test_version_prints_cli_version
+    test_dash_dash_version_matches_version
+    test_install_script_installs_to_custom_dir
     echo "All tests passed"
 }
 

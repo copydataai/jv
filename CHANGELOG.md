@@ -2,6 +2,18 @@
 
 All notable changes to JV will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Agent-ready history, retry, doctor JSON, and watch workflows.
+- Schema v1 compile event recording.
+- Static shell completions for Bash, Zsh, and Fish.
+- Local release archive script and Homebrew formula template.
+
+### Changed
+- Installer now defaults to `$HOME/.local/bin` or `JV_INSTALL_DIR` without sudo.
+- `jv version`, `jv --version`, and `jv -v` now print a stable CLI version.
+
 ## [0.1.0] - 2025-10-14
 
 ### Added

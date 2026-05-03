@@ -13,9 +13,10 @@ jv run
 
 ```bash
 jv doctor
+jv doctor --json
 ```
 
-Use `jv doctor` when JV surprises you. It prints what JV detected, why it selected a main class, which command it would run, and what blocks execution.
+Use `jv doctor` when JV surprises you. It prints what JV detected, why it selected a main class, which command it would run, and what blocks execution. Use `jv doctor --json` when agents or scripts need the same project model as structured data.
 
 ## Inspect Recent JV Activity
 
@@ -26,6 +27,25 @@ jv history --json
 ```
 
 Use `jv history` to see recent runs from generated `.jv/` memory. `--failures` narrows the view to blocked or failed runs, and `--json` prints normalized records for agents and scripts.
+
+## Retry The Last Failure
+
+```bash
+jv run
+# fix the compiler error or blocked project state
+jv retry
+```
+
+Use `jv retry --dry-run` to inspect the selected retry command before executing it. Use `jv retry --json` when an agent needs the latest retryable failure as structured data.
+
+## Watch While Editing
+
+```bash
+jv watch
+jv watch com.example.App alpha beta
+```
+
+`jv watch` runs once immediately, then reruns when Java source files change. Failed builds stay in watch mode so the next edit can recover.
 
 ## Multiple Main Classes
 
