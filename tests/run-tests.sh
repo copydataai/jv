@@ -631,6 +631,67 @@ JAVA
     assert_contains "$(cat "$events")" '"summary":"Plan selected Main from explicit main class argument"'
 }
 
+test_compile_writes_schema_v1_events_on_success() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("compile events");
+    }
+}
+JAVA
+
+    "$JV" compile >/dev/null
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "execution_start"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_contains "$(cat "$events")" '"command":{"name":"compile","argv":["jv","compile"]}'
+    assert_contains "$(cat "$events")" '"phase":"compile"'
+    assert_contains "$(cat "$events")" '"status":"success"'
+    assert_contains "$(cat "$events")" '"classification":"completed"'
+    assert_not_contains "$(cat "$events")" '"event":"executed"'
+}
+
+test_compile_writes_schema_v1_events_on_failure() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/Main.java <<'JAVA'
+public class Main {
+    public static void main(String[] args) {
+        MissingType value = null;
+        System.out.println(value);
+    }
+}
+JAVA
+
+    local output
+    local status
+    set +e
+    output="$("$JV" compile 2>&1)"
+    status=$?
+    set -e
+
+    [[ "$status" -ne 0 ]] || fail "Expected jv compile to fail"
+    assert_contains "$output" "cannot find symbol"
+
+    local events="$TMP_ROOT/app/.jv/runs.jsonl"
+    assert_exists "$events"
+    assert_jsonl_valid_if_jq "$events"
+    assert_jsonl_contains_event_type "$events" "execution_start"
+    assert_jsonl_contains_event_type "$events" "execution_result"
+    assert_contains "$(cat "$events")" '"command":{"name":"compile","argv":["jv","compile"]}'
+    assert_contains "$(cat "$events")" '"phase":"compile"'
+    assert_contains "$(cat "$events")" '"status":"failure"'
+    assert_contains "$(cat "$events")" '"classification":"compile-failure"'
+    assert_not_contains "$(cat "$events")" '"event":"executed"'
+}
+
 test_run_appends_v1_events_after_legacy_and_corrupt_lines() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/.jv"
@@ -1674,6 +1735,8 @@ main() {
     test_run_writes_jv_memory
     test_run_writes_plain_args_to_jv_memory
     test_run_writes_agent_grade_event_schema
+    test_compile_writes_schema_v1_events_on_success
+    test_compile_writes_schema_v1_events_on_failure
     test_run_appends_v1_events_after_legacy_and_corrupt_lines
     test_run_state_contains_planner_reasons
     test_run_memory_write_failure_preserves_success_exit

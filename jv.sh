@@ -1715,6 +1715,34 @@ compile_for_run_or_fail() {
     success "Compilation successful"
 }
 
+compile_java_with_events() {
+    local compile_display
+    local compile_status
+
+    compile_display="javac -d $BIN_DIR -cp $(build_classpath) <sources>"
+
+    if ! emit_execution_start_event "compile" "javac" "$compile_display"; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
+
+    set +e
+    compile_java "$@"
+    compile_status=$?
+    set -e
+
+    if [[ $compile_status -eq 0 ]]; then
+        if ! emit_execution_result_event "compile" "javac" "$compile_display" "success" 0 "completed"; then
+            warn "Could not write JV events to $JV_RUNS"
+        fi
+        return 0
+    fi
+
+    if ! emit_execution_result_event "compile" "javac" "$compile_display" "failure" "$compile_status" "compile-failure"; then
+        warn "Could not write JV events to $JV_RUNS"
+    fi
+    return "$compile_status"
+}
+
 # Run Java program
 run_java() {
     local class_name
@@ -1914,7 +1942,7 @@ main() {
             show_history "$@"
             ;;
         compile)
-            compile_java "$@"
+            compile_java_with_events "$@"
             ;;
         run)
             run_java "$@"
