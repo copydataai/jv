@@ -846,6 +846,42 @@ test_history_rejects_invalid_limit() {
     assert_contains "$output" "Error: --limit must be a positive integer"
 }
 
+test_history_renders_mixed_legacy_and_future_events() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+{"schemaVersion":1,"eventId":"evt_2","runId":"run_2","timestamp":"2026-05-01T20:05:00Z","command":{"argv":["jv","run"],"mode":"run"},"eventType":"result","level":"error","summary":"Compilation failed","payload":{"status":"failure","phase":"compile","step":{"kind":"build","argv":["javac","-d","bin","-cp","bin","src/Main.java"],"exitCode":1},"classification":"compile-failure","nextAction":"Fix compiler errors and run jv run again"}}
+JSONL
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "1. failure  -  javac -d bin -cp bin src/Main.java"
+    assert_contains "$output" "Reason: compile-failure"
+    assert_contains "$output" "2. success  Main  java -cp bin Main"
+}
+
+test_history_skips_corrupt_jsonl_lines() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+not json
+{"schemaVersion":1,"eventType":"result","level":"error","summary":"No main class","payload":{"status":"blocked","classification":"missing-main"}}
+JSONL
+
+    local output
+    output="$("$JV" history)"
+
+    assert_contains "$output" "1. blocked  -  -"
+    assert_contains "$output" "Reason: missing-main"
+    assert_contains "$output" "2. success  Main  java -cp bin Main"
+    assert_contains "$output" "Warning: skipped 1 corrupt .jv/runs.jsonl line"
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1624,6 +1660,8 @@ main() {
     test_history_limit_shows_newest_records
     test_history_failures_filter_empty_for_legacy_successes
     test_history_rejects_invalid_limit
+    test_history_renders_mixed_legacy_and_future_events
+    test_history_skips_corrupt_jsonl_lines
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
