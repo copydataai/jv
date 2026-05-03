@@ -1098,6 +1098,102 @@ JAVA
     assert_contains "$output" "arg: two"
 }
 
+test_run_prints_agent_failure_for_maven_compile_error() {
+    if ! command -v mvn >/dev/null 2>&1; then
+        echo "Skipping Maven failure test; mvn not installed"
+        return 0
+    fi
+
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/main/java/com/example"
+    cd "$TMP_ROOT/app"
+    cat > pom.xml <<'XML'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+  </properties>
+</project>
+XML
+    cat > src/main/java/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println(message);
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected Maven compile failure"
+    fi
+    assert_failure_block "$output" "maven_compile_failed" "maven" "jv run"
+    assert_contains "$output" "Message: Maven failed during \`mvn compile\`."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"maven_compile_failed"'
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
+test_run_prints_agent_failure_for_maven_runtime_error() {
+    if ! command -v mvn >/dev/null 2>&1; then
+        echo "Skipping Maven runtime failure test; mvn not installed"
+        return 0
+    fi
+
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src/main/java/com/example"
+    cd "$TMP_ROOT/app"
+    cat > pom.xml <<'XML'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+  </properties>
+</project>
+XML
+    cat > src/main/java/com/example/App.java <<'JAVA'
+package com.example;
+
+public class App {
+    public static void main(String[] args) {
+        throw new IllegalStateException("maven runtime failure");
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run com.example.App demo 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected Maven runtime failure"
+    fi
+    assert_contains "$output" "maven runtime failure"
+    assert_failure_block "$output" "maven_run_failed" "maven" "jv run com.example.App demo"
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"maven_run_failed"'
+    assert_not_exists "$TMP_ROOT/app/.jv/state.json"
+}
+
 test_doctor_reports_project_state() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src"
@@ -1410,6 +1506,8 @@ main() {
     test_remember_main_rejects_invalid_class_names
     test_forget_main_rejects_extra_args
     test_maven_explain_and_run
+    test_run_prints_agent_failure_for_maven_compile_error
+    test_run_prints_agent_failure_for_maven_runtime_error
     test_doctor_reports_project_state
     test_doctor_reports_tool_versions
     test_doctor_survives_broken_tool_versions

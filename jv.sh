@@ -1421,6 +1421,10 @@ run_java() {
             if ! emit_execution_result_event "compile" "maven" "$PLAN_BUILD_DISPLAY" "failure" "$maven_status" "compile-failure"; then
                 warn "Could not write JV events to $JV_RUNS"
             fi
+            local retry
+            retry="$(retry_command_for_current_run "$@")"
+            print_failure_block "maven_compile_failed" "maven" "$retry" "$maven_status" >&2
+            append_failure_event "failed" "maven" "maven_compile_failed" "$PLAN_BUILD_DISPLAY" "$retry" "$maven_status" || true
             return "$maven_status"
         fi
         if ! emit_execution_result_event "compile" "maven" "$PLAN_BUILD_DISPLAY" "success" 0 "completed"; then
@@ -1442,6 +1446,10 @@ run_java() {
             if ! emit_execution_result_event "run" "maven" "$PLAN_RUN_DISPLAY" "failure" "$maven_status" "runtime-failure"; then
                 warn "Could not write JV events to $JV_RUNS"
             fi
+            local retry
+            retry="$(retry_command_for_current_run "$@")"
+            print_failure_block "maven_run_failed" "maven" "$retry" "$maven_status" >&2
+            append_failure_event "failed" "maven" "maven_run_failed" "$PLAN_RUN_DISPLAY" "$retry" "$maven_status" || true
             return "$maven_status"
         fi
         if ! emit_execution_result_event "run" "maven" "$PLAN_RUN_DISPLAY" "success" 0 "completed"; then
