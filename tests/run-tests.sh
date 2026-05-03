@@ -276,6 +276,40 @@ JAVA
     assert_not_contains "$(cat "$events")" '"eventType":"execution_start"'
 }
 
+test_run_prints_agent_failure_for_ambiguous_main() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/src"
+    cd "$TMP_ROOT/app"
+    cat > src/App.java <<'JAVA'
+public class App {
+    public static void main(String[] args) {
+        System.out.println("app");
+    }
+}
+JAVA
+    cat > src/Tool.java <<'JAVA'
+public class Tool {
+    public static void main(String[] args) {
+        System.out.println("tool");
+    }
+}
+JAVA
+
+    set +e
+    local output
+    output="$("$JV" run 2>&1)"
+    local status=$?
+    set -e
+
+    assert_status "$status" 1
+    assert_failure_block "$output" "main_ambiguous" "planner" "jv run App"
+    assert_contains "$output" "Message: Multiple main classes were found."
+    assert_contains "$output" "Next action: Pass one main class explicitly, for example \`jv run App\`."
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"eventType":"failure"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"reason":"main_ambiguous"'
+    assert_contains "$(cat "$TMP_ROOT/app/.jv/runs.jsonl")" '"retryCommand":"jv run App"'
+}
+
 test_run_refuses_multiple_plain_main_classes_with_non_candidate_token() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src/com/example"
@@ -1313,6 +1347,7 @@ main() {
     test_run_infers_single_plain_main_class_with_args
     test_run_refuses_multiple_plain_main_classes
     test_run_writes_blocker_event_without_execution_start
+    test_run_prints_agent_failure_for_ambiguous_main
     test_run_refuses_multiple_plain_main_classes_with_non_candidate_token
     test_run_ignores_commented_plain_main_signatures
     test_run_ignores_block_commented_plain_main_signatures

@@ -161,6 +161,132 @@ plan_add_blocker() {
     PLAN_BLOCKERS+=("$1")
 }
 
+command_display_from_args() {
+    local display="jv run"
+    local arg
+
+    for arg in "$@"; do
+        display="$display $arg"
+    done
+
+    printf '%s' "$display"
+}
+
+first_main_candidate() {
+    if [[ ${#PLAN_MAIN_CANDIDATES[@]} -gt 0 ]]; then
+        printf '%s' "${PLAN_MAIN_CANDIDATES[0]}"
+    fi
+}
+
+retry_command_for_current_run() {
+    local fallback_main
+
+    if [[ "$#" -gt 0 ]]; then
+        command_display_from_args "$@"
+        return 0
+    fi
+
+    fallback_main="$(first_main_candidate)"
+    if [[ -n "$fallback_main" && "${#PLAN_MAIN_CANDIDATES[@]}" -gt 1 ]]; then
+        command_display_from_args "$fallback_main"
+        return 0
+    fi
+
+    command_display_from_args
+}
+
+failure_reason_for_blocker() {
+    local blocker="$1"
+
+    case "$blocker" in
+        "No Java project detected."*) echo "project_unknown" ;;
+        "Source root not found:"*) echo "source_root_missing" ;;
+        "No main class found"*) echo "main_missing" ;;
+        "Multiple main classes found:"*) echo "main_ambiguous" ;;
+        "Requested main class not found"*) echo "explicit_main_missing" ;;
+        "Remembered main class"*"stale:"*) echo "remembered_main_stale" ;;
+        "Required tool missing:"*) echo "tool_missing" ;;
+        *) echo "project_unknown" ;;
+    esac
+}
+
+failure_message_for_reason() {
+    local reason="$1"
+
+    case "$reason" in
+        project_unknown) echo "No supported Java project was detected." ;;
+        source_root_missing) echo "The expected source root was not found." ;;
+        main_missing) echo "No Java main method was detected." ;;
+        main_ambiguous) echo "Multiple main classes were found." ;;
+        explicit_main_missing) echo "The requested main class was not found in source." ;;
+        remembered_main_stale) echo "The remembered main class is no longer present in source." ;;
+        tool_missing) echo "A required local tool is missing." ;;
+        compile_failed) echo "javac failed while compiling the selected plain Java project." ;;
+        maven_compile_failed) echo "Maven failed during \`mvn compile\`." ;;
+        maven_run_failed) echo "Maven failed while running $PLAN_SELECTED_MAIN." ;;
+        runtime_failed) echo "Java exited with a non-zero status while running $PLAN_SELECTED_MAIN." ;;
+        memory_write_failed) echo "Could not write JV memory to $JV_DIR/." ;;
+        *) echo "JV could not complete the requested action." ;;
+    esac
+}
+
+next_action_for_reason() {
+    local reason="$1"
+    local retry="$2"
+
+    case "$reason" in
+        project_unknown) echo "Run from a directory with pom.xml or src/." ;;
+        source_root_missing) echo "Create the expected source root or run JV from the project root." ;;
+        main_missing) echo "Add a public static void main(String[] args) method, then retry." ;;
+        main_ambiguous) echo "Pass one main class explicitly, for example \`$retry\`." ;;
+        explicit_main_missing) echo "Use one of the detected main classes or update the source file." ;;
+        remembered_main_stale) echo "Run \`jv forget main\` or remember a main class that still exists." ;;
+        tool_missing) echo "Install the missing required tool, then retry." ;;
+        compile_failed) echo "Fix the compiler errors above, then retry the same JV command." ;;
+        maven_compile_failed) echo "Fix the Maven compilation errors above, then retry the same JV command." ;;
+        maven_run_failed) echo "Inspect the Maven exec output above, then retry the same JV command." ;;
+        runtime_failed) echo "Fix the runtime error above, then retry the same JV command." ;;
+        memory_write_failed) echo "Check that $JV_DIR/ is a writable directory." ;;
+        *) echo "Inspect the output above, then retry." ;;
+    esac
+}
+
+print_failure_block() {
+    local reason="$1"
+    local action="$2"
+    local retry="$3"
+    local exit_code="$4"
+    local message
+    local next_action
+
+    message="$(failure_message_for_reason "$reason")"
+    next_action="$(next_action_for_reason "$reason" "$retry")"
+
+    echo ""
+    echo "JV failure"
+    echo "Reason: $reason"
+    echo "Action: $action"
+    echo "Message: $message"
+    echo "Next action: $next_action"
+    echo "Retry command: $retry"
+    echo "Exit code: $exit_code"
+}
+
+print_warning_block() {
+    local reason="$1"
+    local message
+    local next_action
+
+    message="$(failure_message_for_reason "$reason")"
+    next_action="$(next_action_for_reason "$reason" "jv run")"
+
+    echo ""
+    echo "JV warning"
+    echo "Reason: $reason"
+    echo "Message: $message"
+    echo "Next action: $next_action"
+}
+
 ensure_jv_dir() {
     mkdir -p "$JV_DIR"
 }
@@ -294,6 +420,36 @@ emit_memory_write_event() {
     local payload
     payload="{\"target\":\"$(json_escape "$target")\",\"status\":\"$(json_escape "$status")\",\"classification\":\"$(json_escape "$classification")\",\"rememberedMainClass\":\"$(json_escape "$PLAN_REMEMBERED_MAIN")\",\"lastSuccessfulMainClass\":\"$(json_escape "$PLAN_SELECTED_MAIN")\",\"lastPlan\":{\"build\":\"$(json_escape "$PLAN_BUILD_DISPLAY")\",\"run\":\"$(json_escape "$PLAN_RUN_DISPLAY")\"}}"
     append_event_json "memory_write" "Memory write $status for $target" "$payload"
+}
+
+append_failure_event() {
+    local event="$1"
+    local action="$2"
+    local reason="$3"
+    local command="$4"
+    local retry="$5"
+    local exit_code="$6"
+    local message
+    local next_action
+    local payload
+
+    message="$(failure_message_for_reason "$reason")"
+    next_action="$(next_action_for_reason "$reason" "$retry")"
+    payload="{\"event\":\"$(json_escape "$event")\",\"action\":\"$(json_escape "$action")\",\"reason\":\"$(json_escape "$reason")\",\"command\":\"$(json_escape "$command")\",\"message\":\"$(json_escape "$message")\",\"nextAction\":\"$(json_escape "$next_action")\",\"retryCommand\":\"$(json_escape "$retry")\",\"exitCode\":$exit_code}"
+    append_event_json "failure" "$message" "$payload"
+}
+
+append_warning_event() {
+    local reason="$1"
+    local retry="$2"
+    local message
+    local next_action
+    local payload
+
+    message="$(failure_message_for_reason "$reason")"
+    next_action="$(next_action_for_reason "$reason" "$retry")"
+    payload="{\"event\":\"warning\",\"action\":\"memory\",\"reason\":\"$(json_escape "$reason")\",\"command\":\"\",\"message\":\"$(json_escape "$message")\",\"nextAction\":\"$(json_escape "$next_action")\",\"retryCommand\":\"$(json_escape "$retry")\"}"
+    append_event_json "warning" "$message" "$payload"
 }
 
 write_state() {
@@ -1213,7 +1369,15 @@ run_java() {
         if ! emit_blockers_event; then
             warn "Could not write JV events to $JV_RUNS"
         fi
+        local blocker="${PLAN_BLOCKERS[0]}"
+        local reason
+        local retry
+
+        reason="$(failure_reason_for_blocker "$blocker")"
+        retry="$(retry_command_for_current_run "$@")"
         print_plan_summary >&2
+        print_failure_block "$reason" "planner" "$retry" 1 >&2
+        append_failure_event "blocked" "run" "$reason" "$retry" "$retry" 1 || true
         return 1
     fi
 
