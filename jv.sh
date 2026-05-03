@@ -1373,6 +1373,8 @@ history_normalize_legacy_line() {
 }
 
 history_render_text_rows() {
+    local empty_message="$1"
+    shift
     local rows=("$@")
     local row
     local index=1
@@ -1384,7 +1386,7 @@ history_render_text_rows() {
     echo ""
 
     if [[ ${#rows[@]} -eq 0 ]]; then
-        echo "No JV history entries found in $JV_RUNS."
+        echo "$empty_message"
         return 0
     fi
 
@@ -1409,6 +1411,7 @@ show_history() {
     local rows=()
     local line
     local normalized
+    local empty_message
 
     while [[ $# -gt 0 ]]; do
         arg="$1"
@@ -1455,11 +1458,28 @@ show_history() {
         fi
     done < "$JV_RUNS"
 
+    if [[ $failures_only -eq 1 ]]; then
+        local filtered=()
+        local row_status
+        local row
+        for row in "${rows[@]}"; do
+            IFS=$'\t' read -r row_status _ <<<"$row"
+            if [[ "$row_status" == "failure" || "$row_status" == "blocked" ]]; then
+                filtered+=("$row")
+            fi
+        done
+        rows=("${filtered[@]}")
+    fi
+
     if [[ ${#rows[@]} -gt "$limit" ]]; then
         rows=("${rows[@]:0:$limit}")
     fi
 
-    history_render_text_rows "${rows[@]}"
+    empty_message="No JV history entries found in $JV_RUNS."
+    if [[ $failures_only -eq 1 ]]; then
+        empty_message="No failed or blocked JV events found."
+    fi
+    history_render_text_rows "$empty_message" "${rows[@]}"
 }
 
 # Compile Java files

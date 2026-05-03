@@ -798,6 +798,54 @@ test_history_empty_runs_log_is_empty_state() {
     assert_contains "$output" "No JV history entries found in .jv/runs.jsonl."
 }
 
+test_history_limit_shows_newest_records() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin First"}
+{"event":"executed","detail":"java -cp bin Second"}
+JSONL
+
+    local output
+    output="$("$JV" history --limit 1)"
+
+    assert_contains "$output" "1. success  Second  java -cp bin Second"
+    assert_not_contains "$output" "First"
+}
+
+test_history_failures_filter_empty_for_legacy_successes() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app/.jv"
+    cd "$TMP_ROOT/app"
+    cat > .jv/runs.jsonl <<'JSONL'
+{"event":"executed","detail":"java -cp bin Main"}
+JSONL
+
+    local output
+    output="$("$JV" history --failures)"
+
+    assert_contains "$output" "No failed or blocked JV events found."
+    assert_not_contains "$output" "java -cp bin Main"
+}
+
+test_history_rejects_invalid_limit() {
+    setup_tmp
+    mkdir -p "$TMP_ROOT/app"
+    cd "$TMP_ROOT/app"
+
+    set +e
+    local output
+    output="$("$JV" history --limit nope 2>&1)"
+    local status=$?
+    set -e
+
+    if [[ $status -eq 0 ]]; then
+        fail "Expected invalid --limit to fail"
+    fi
+    assert_contains "$output" "Error: --limit must be a positive integer"
+}
+
 test_run_escapes_control_characters_in_memory_json() {
     setup_tmp
     mkdir -p "$TMP_ROOT/app/src" "$TMP_ROOT/app/lib" "$TMP_ROOT/empty"
@@ -1573,6 +1621,9 @@ main() {
     test_events_alias_matches_history_for_legacy_run_log
     test_history_missing_jv_is_empty_state_and_side_effect_free
     test_history_empty_runs_log_is_empty_state
+    test_history_limit_shows_newest_records
+    test_history_failures_filter_empty_for_legacy_successes
+    test_history_rejects_invalid_limit
     test_run_escapes_control_characters_in_memory_json
     test_run_prints_agent_failure_for_plain_compile_error
     test_run_failure_does_not_write_success_memory
